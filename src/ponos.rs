@@ -31,9 +31,10 @@ impl Ponos {
         let ast = self.parser.parse(source.clone()).unwrap();
         println!("ast:\n{:#?}", ast);
 
-        let ctx = self.generator.generate(ast::AstNode::Program(ast));
+        let mut ctx = self.generator.generate(ast::AstNode::Program(ast));
         println!("opcodes:\n{:#?}", ctx.opcodes);
 
-        self.vm.execute(ctx.opcodes);
+        self.vm.execute(ctx.opcodes, &mut ctx.constants);
+        println!("vm stack:\n{:#?}", self.vm.stack);
     }
 }
