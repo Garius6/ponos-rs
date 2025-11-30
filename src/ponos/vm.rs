@@ -1,5 +1,5 @@
 use crate::ponos::{
-    opcode,
+    opcode::{self, OpCode},
     value::{self, Value},
 };
 
@@ -21,7 +21,14 @@ impl<'a> VM {
                 opcode::OpCode::Constant(idx) => {
                     self.stack.push(constants[idx].clone());
                 }
-                opcode::OpCode::Negate => todo!(),
+                opcode::OpCode::Negate => {
+                    let a = match self.stack.pop().unwrap() {
+                        Value::Number(n) => n,
+                        _ => panic!("Operand not a number"),
+                    };
+
+                    self.stack.push(Value::Number(-a));
+                }
                 opcode::OpCode::Add => self.binary_number_op(|a, b| a + b),
                 opcode::OpCode::Sub => self.binary_number_op(|a, b| a - b),
                 opcode::OpCode::Mul => self.binary_number_op(|a, b| a * b),
