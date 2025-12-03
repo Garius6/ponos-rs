@@ -400,9 +400,9 @@ pub fn parse_module_declaration<'a>(input: &mut Input<'a>) -> PResult<'a, Statem
     }))
 }
 
-/// Парсит импорт: использовать "path" [модификаторы] ;
+/// Парсит импорт: использовать "path" [как псевдоним] ;
 pub fn parse_import_statement<'a>(input: &mut Input<'a>) -> PResult<'a, Statement> {
-    use crate::ponos::parser::lexer::{keyword_use, keyword_show, keyword_hide, keyword_as, parse_string};
+    use crate::ponos::parser::lexer::{keyword_use, keyword_as, parse_string};
     let start = input.len();
 
     keyword_use(input)?;
@@ -411,8 +411,13 @@ pub fn parse_import_statement<'a>(input: &mut Input<'a>) -> PResult<'a, Statemen
     let path = parse_string(input)?;
     skip_ws_and_comments(input)?;
 
-    // Опциональные модификаторы
-    let modifiers = parse_import_modifiers(input).ok();
+    // Опциональный модификатор "как псевдоним"
+    let alias = if keyword_as(input).is_ok() {
+        skip_ws_and_comments(input)?;
+        Some(parse_identifier(input)?.to_string())
+    } else {
+        None
+    };
 
     skip_ws_and_comments(input)?;
     char_(';').parse_next(input)?;
@@ -422,62 +427,12 @@ pub fn parse_import_statement<'a>(input: &mut Input<'a>) -> PResult<'a, Statemen
 
     Ok(Statement::Import(ImportStatement {
         path,
-        modifiers,
+        alias,
         span,
     }))
 }
 
-fn parse_import_modifiers<'a>(input: &mut Input<'a>) -> PResult<'a, ImportModifiers> {
-    use crate::ponos::parser::lexer::{keyword_show, keyword_hide, keyword_as};
-
-    let saved = input.checkpoint();
-
-    // как identifier [показать|скрыть ids]
-    if keyword_as(input).is_ok() {
-        skip_ws_and_comments(input)?;
-        let alias = parse_identifier(input)?.to_string();
-        skip_ws_and_comments(input)?;
-
-        let saved2 = input.checkpoint();
-        if keyword_show(input).is_ok() {
-            skip_ws_and_comments(input)?;
-            let ids = parse_identifier_list(input)?;
-            return Ok(ImportModifiers::AsWithShow(alias, ids));
-        }
-        input.reset(&saved2);
-
-        if keyword_hide(input).is_ok() {
-            skip_ws_and_comments(input)?;
-            let ids = parse_identifier_list(input)?;
-            return Ok(ImportModifiers::AsWithHide(alias, ids));
-        }
-
-        return Ok(ImportModifiers::As(alias));
-    }
-
-    input.reset(&saved);
-
-    // показать ids
-    if keyword_show(input).is_ok() {
-        skip_ws_and_comments(input)?;
-        let ids = parse_identifier_list(input)?;
-        return Ok(ImportModifiers::Show(ids));
-    }
-
-    // скрыть ids
-    if keyword_hide(input).is_ok() {
-        skip_ws_and_comments(input)?;
-        let ids = parse_identifier_list(input)?;
-        return Ok(ImportModifiers::Hide(ids));
-    }
-
-    use crate::ponos::parser::error::{PonosParseError, ParseErrorKind};
-    Err(winnow::error::ErrMode::Backtrack(PonosParseError::new(
-        ParseErrorKind::Custom("Expected import modifier".to_string()),
-        Span::new(0, 1),
-    )))
-}
-
+/// Вспомогательная функция для парсинга списка идентификаторов через запятую
 fn parse_identifier_list<'a>(input: &mut Input<'a>) -> PResult<'a, Vec<String>> {
     let ids: Vec<_> = separated(
         1..,
@@ -1152,46 +1107,7 @@ mod tests {
         match stmt {
             Statement::Import(import) => {
                 assert_eq!(import.path, "путь/к/модулю");
-                assert!(import.modifiers.is_none());
-            }
-            _ => panic!("Expected Import"),
-        }
-    }
-
-    #[test]
-    fn test_parse_import_with_show() {
-        let mut input = r#"использовать "модуль" показать Класс1, Класс2;"#;
-        let stmt = parse_statement(&mut input).unwrap();
-        match stmt {
-            Statement::Import(import) => {
-                assert_eq!(import.path, "модуль");
-                match &import.modifiers {
-                    Some(ImportModifiers::Show(items)) => {
-                        assert_eq!(items.len(), 2);
-                        assert_eq!(items[0], "Класс1");
-                        assert_eq!(items[1], "Класс2");
-                    }
-                    _ => panic!("Expected Show modifier"),
-                }
-            }
-            _ => panic!("Expected Import"),
-        }
-    }
-
-    #[test]
-    fn test_parse_import_with_hide() {
-        let mut input = r#"использовать "модуль" скрыть Внутренний;"#;
-        let stmt = parse_statement(&mut input).unwrap();
-        match stmt {
-            Statement::Import(import) => {
-                assert_eq!(import.path, "модуль");
-                match &import.modifiers {
-                    Some(ImportModifiers::Hide(items)) => {
-                        assert_eq!(items.len(), 1);
-                        assert_eq!(items[0], "Внутренний");
-                    }
-                    _ => panic!("Expected Hide modifier"),
-                }
+                assert!(import.alias.is_none());
             }
             _ => panic!("Expected Import"),
         }
@@ -1204,32 +1120,7 @@ mod tests {
         match stmt {
             Statement::Import(import) => {
                 assert_eq!(import.path, "модуль");
-                match &import.modifiers {
-                    Some(ImportModifiers::As(alias)) => {
-                        assert_eq!(alias, "М");
-                    }
-                    _ => panic!("Expected As modifier"),
-                }
-            }
-            _ => panic!("Expected Import"),
-        }
-    }
-
-    #[test]
-    fn test_parse_import_with_as_and_show() {
-        let mut input = r#"использовать "модуль" как М показать Класс;"#;
-        let stmt = parse_statement(&mut input).unwrap();
-        match stmt {
-            Statement::Import(import) => {
-                assert_eq!(import.path, "модуль");
-                match &import.modifiers {
-                    Some(ImportModifiers::AsWithShow(alias, items)) => {
-                        assert_eq!(alias, "М");
-                        assert_eq!(items.len(), 1);
-                        assert_eq!(items[0], "Класс");
-                    }
-                    _ => panic!("Expected AsWithShow modifier"),
-                }
+                assert_eq!(import.alias, Some("М".to_string()));
             }
             _ => panic!("Expected Import"),
         }

@@ -1,8 +1,9 @@
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Value {
     Number(f64),
     String(String),
     Boolean(bool),
+    Nil,
 }
 
 pub fn is_equal(a: &Value, b: &Value) -> bool {
@@ -10,6 +11,7 @@ pub fn is_equal(a: &Value, b: &Value) -> bool {
         (Value::Number(x), Value::Number(y)) => x == y,
         (Value::String(x), Value::String(y)) => x == y,
         (Value::Boolean(x), Value::Boolean(y)) => x == y,
+        (Value::Nil, Value::Nil) => true,
         _ => false,
     }
 }

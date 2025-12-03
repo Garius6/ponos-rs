@@ -9,6 +9,7 @@ pub enum SymbolKind {
     Class,
     Interface,
     Annotation,
+    Module, // Модуль/пространство имён
 }
 
 /// Идентификатор области видимости
@@ -16,7 +17,7 @@ pub enum SymbolKind {
 pub struct ScopeId(pub usize);
 
 /// Символ в таблице символов
-/// Единое представление для переменных, функций, классов и т.д.
+/// Единое представление для переменных, функций, классов, модулей и т.д.
 #[derive(Debug, Clone)]
 pub struct Symbol {
     /// Имя символа
@@ -27,6 +28,8 @@ pub struct Symbol {
     pub is_exported: bool,
     /// Позиция в исходном коде
     pub span: Span,
+    /// Область видимости модуля (только для SymbolKind::Module)
+    pub module_scope_id: Option<ScopeId>,
     // TODO: В будущем добавить type_info для типчекера
 }
 
@@ -38,6 +41,18 @@ impl Symbol {
             kind,
             is_exported,
             span,
+            module_scope_id: None,
+        }
+    }
+
+    /// Создать символ модуля со ссылкой на его scope
+    pub fn new_module(name: String, module_scope_id: ScopeId, span: Span) -> Self {
+        Symbol {
+            name,
+            kind: SymbolKind::Module,
+            is_exported: false, // Модули не экспортируются, экспортируются их символы
+            span,
+            module_scope_id: Some(module_scope_id),
         }
     }
 }

@@ -21,6 +21,7 @@ pub enum Statement {
     AnnotationDecl(AnnotationDecl),
     ModuleDecl(ModuleDecl),
     Import(ImportStatement),
+    ModuleBlock(ModuleBlock),  // Блок кода модуля с пространством имен
     If(IfStatement),
     While(WhileStatement),
     Return(ReturnStatement),
@@ -162,17 +163,15 @@ pub struct ModuleDecl {
 #[derive(Debug, Clone)]
 pub struct ImportStatement {
     pub path: String,
-    pub modifiers: Option<ImportModifiers>,
+    pub alias: Option<String>,  // Переименование: использовать "модуль" как псевдоним
     pub span: Span,
 }
 
 #[derive(Debug, Clone)]
-pub enum ImportModifiers {
-    Show(Vec<String>),
-    Hide(Vec<String>),
-    As(String),
-    AsWithShow(String, Vec<String>),
-    AsWithHide(String, Vec<String>),
+pub struct ModuleBlock {
+    pub namespace: String,           // Имя пространства имен
+    pub statements: Vec<Statement>,  // Statements модуля
+    pub span: Span,
 }
 
 // Выражения
@@ -196,8 +195,11 @@ pub enum Expression {
     // Вызов функции
     Call(Box<CallExpr>),
 
-    // Доступ к полю
+    // Доступ к полю объекта
     FieldAccess(Box<FieldAccessExpr>),
+
+    // Доступ к символу модуля (модуль.символ)
+    ModuleAccess(Box<ModuleAccessExpr>),
 
     // Замыкание/лямбда
     Lambda(Box<LambdaExpr>),
@@ -218,6 +220,7 @@ impl Expression {
             Expression::Unary(e) => e.span,
             Expression::Call(e) => e.span,
             Expression::FieldAccess(e) => e.span,
+            Expression::ModuleAccess(e) => e.span,
             Expression::Lambda(e) => e.span,
             Expression::This(s) => *s,
             Expression::Super(_, s) => *s,
@@ -298,6 +301,13 @@ pub struct CallExpr {
 pub struct FieldAccessExpr {
     pub object: Expression,
     pub field: String,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct ModuleAccessExpr {
+    pub namespace: String,  // Имя пространства имен (математика, мат)
+    pub symbol: String,      // Имя символа (корень, ПИ)
     pub span: Span,
 }
 

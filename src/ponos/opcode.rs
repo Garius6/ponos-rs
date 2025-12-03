@@ -1,6 +1,7 @@
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum OpCode {
     Constant(usize),
+
     // Математика
     Negate,
     Add,
@@ -19,8 +20,9 @@ pub enum OpCode {
     Less,
 
     // локальные переменные
-    GetLocal,
-    SetLocal,
+    DefineLocal(usize),
+    GetLocal(usize),
+    SetLocal(usize),
 
     // замыкания
     Closure,
@@ -48,7 +50,7 @@ pub enum OpCode {
     GetSuper,    // Получить метод родительского класса
 
     // переменные
-    DefineGlobal,
-    SetGlobal,
-    GetGlobal,
+    DefineGlobal(usize),
+    SetGlobal(usize),
+    GetGlobal(usize),
 }

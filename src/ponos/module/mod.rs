@@ -1,30 +1,32 @@
 mod loader;
+mod resolver;
 
 pub use loader::ModuleLoader;
+pub use resolver::{ModuleResolver, LoadedModule};
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use crate::ponos::ast::{Program, ImportModifiers};
+use crate::ponos::ast::{Program, Statement, ModuleBlock};
 use crate::ponos::span::Span;
-use crate::ponos::symbol_table::{ScopeId, Symbol};
+use crate::ponos::symbol_table::ScopeId;
 
 /// Информация об импорте
 #[derive(Debug, Clone)]
 pub struct Import {
     /// Путь к модулю
     pub module_path: String,
-    /// Модификаторы импорта (показать/скрыть/как)
-    pub modifiers: Option<ImportModifiers>,
+    /// Псевдоним для пространства имен (опционально)
+    pub alias: Option<String>,
     /// Позиция в исходном коде
     pub span: Span,
 }
 
 impl Import {
     /// Создать новый импорт
-    pub fn new(module_path: String, modifiers: Option<ImportModifiers>, span: Span) -> Self {
+    pub fn new(module_path: String, alias: Option<String>, span: Span) -> Self {
         Import {
             module_path,
-            modifiers,
+            alias,
             span,
         }
     }
@@ -120,11 +122,30 @@ impl ModuleRegistry {
     }
 }
 
+/// Присоединить AST модуля к основному AST
+///
+/// Оборачивает statements модуля в ModuleBlock и добавляет в основной AST
+///
+/// # Параметры
+/// - `main_ast`: Основной AST программы
+/// - `loaded_module`: Загруженный модуль с AST и пространством имен
+pub fn merge_module_ast(main_ast: &mut Program, loaded_module: LoadedModule) {
+    // Создаем ModuleBlock для модуля
+    let module_block = ModuleBlock {
+        namespace: loaded_module.namespace,
+        statements: loaded_module.ast.statements,
+        span: Span::default(),
+    };
+
+    // Добавляем ModuleBlock в основной AST
+    main_ast.statements.push(Statement::ModuleBlock(module_block));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::ponos::ast::Program;
-    use crate::ponos::symbol_table::{SymbolTable, SymbolKind};
+    use crate::ponos::symbol_table::{SymbolTable, SymbolKind, Symbol};
 
     #[test]
     fn test_import_creation() {
@@ -134,7 +155,7 @@ mod tests {
             Span::new(0, 20),
         );
         assert_eq!(import.module_path, "стандарт/мат");
-        assert!(import.modifiers.is_none());
+        assert!(import.alias.is_none());
     }
 
     #[test]
