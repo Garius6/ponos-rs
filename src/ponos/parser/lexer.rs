@@ -252,10 +252,6 @@ pub fn keyword_implements<'a>(input: &mut Input<'a>) -> PResult<'a, ()> {
     keyword("реализует").parse_next(input)
 }
 
-pub fn keyword_module<'a>(input: &mut Input<'a>) -> PResult<'a, ()> {
-    keyword("модуль").parse_next(input)
-}
-
 pub fn keyword_use<'a>(input: &mut Input<'a>) -> PResult<'a, ()> {
     keyword("использовать").parse_next(input)
 }

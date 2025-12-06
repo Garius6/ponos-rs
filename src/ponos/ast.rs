@@ -19,7 +19,6 @@ pub enum Statement {
     ClassDecl(ClassDecl),
     InterfaceDecl(InterfaceDecl),
     AnnotationDecl(AnnotationDecl),
-    ModuleDecl(ModuleDecl),
     Import(ImportStatement),
     ModuleBlock(ModuleBlock),  // Блок кода модуля с пространством имен
     If(IfStatement),
@@ -153,12 +152,6 @@ pub struct AnnotationDecl {
 }
 
 // Модули и импорты
-
-#[derive(Debug, Clone)]
-pub struct ModuleDecl {
-    pub name: String,
-    pub span: Span,
-}
 
 #[derive(Debug, Clone)]
 pub struct ImportStatement {

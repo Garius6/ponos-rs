@@ -16,7 +16,6 @@ pub fn parse_statement<'a>(input: &mut Input<'a>) -> PResult<'a, Statement> {
     skip_ws_and_comments(input)?;
 
     alt((
-        parse_module_declaration,
         parse_import_statement,
         parse_class_declaration,
         parse_interface_declaration,
@@ -377,28 +376,6 @@ fn parse_parameter<'a>(input: &mut Input<'a>) -> PResult<'a, Parameter> {
 }
 
 // Расширенные конструкции грамматики
-
-/// Парсит объявление модуля: модуль identifier ;
-pub fn parse_module_declaration<'a>(input: &mut Input<'a>) -> PResult<'a, Statement> {
-    use crate::ponos::parser::lexer::keyword_module;
-    let start = input.len();
-
-    keyword_module(input)?;
-    skip_ws_and_comments(input)?;
-
-    let name = parse_identifier(input)?.to_string();
-    skip_ws_and_comments(input)?;
-
-    char_(';').parse_next(input)?;
-
-    let end = input.len();
-    let span = Span::new(start - end, start);
-
-    Ok(Statement::ModuleDecl(ModuleDecl {
-        name,
-        span,
-    }))
-}
 
 /// Парсит импорт: использовать "path" [как псевдоним] ;
 pub fn parse_import_statement<'a>(input: &mut Input<'a>) -> PResult<'a, Statement> {
@@ -1085,18 +1062,6 @@ mod tests {
                 assert!(annotation.body.is_empty());
             }
             _ => panic!("Expected AnnotationDecl"),
-        }
-    }
-
-    #[test]
-    fn test_parse_module() {
-        let mut input = "модуль мойМодуль;";
-        let stmt = parse_statement(&mut input).unwrap();
-        match stmt {
-            Statement::ModuleDecl(module) => {
-                assert_eq!(module.name, "мойМодуль");
-            }
-            _ => panic!("Expected ModuleDecl"),
         }
     }
 

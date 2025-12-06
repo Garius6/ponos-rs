@@ -57,9 +57,6 @@ impl Generator {
 
     fn emit_statement(&mut self, stmt: Statement, ctx: &mut GenContext) {
         match stmt {
-            Statement::ModuleDecl(_module) => {
-                // ModuleDecl больше не генерирует опкоды - пространство имен устанавливается в ModuleBlock
-            }
             Statement::VarDecl(var_decl) => {
                 if ctx.in_function {
                     if var_decl.is_exported {
@@ -295,13 +292,9 @@ mod tests {
 
     #[test]
     fn honors_module_declaration_and_exports() {
-        // Модули теперь не генерируют опкоды - экспорты обрабатываются на этапе разрешения имен
+        // Экспорты обрабатываются на этапе разрешения имен
         let program = Program {
             statements: vec![
-                Statement::ModuleDecl(crate::ponos::ast::ModuleDecl {
-                    name: "math".to_string(),
-                    span: Span::default(),
-                }),
                 Statement::VarDecl(VarDecl {
                     name: "x".to_string(),
                     type_annotation: None,
