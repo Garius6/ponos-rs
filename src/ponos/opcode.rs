@@ -31,9 +31,9 @@ pub enum OpCode {
     CloseUpvalues,
 
     // поток выполнения
-    Jump,
-    JumpIfTrue,
-    JumpIfFalse,
+    Jump(usize),        // Безусловный переход на абсолютный адрес
+    JumpIfTrue(usize),  // Переход если вершина стека true
+    JumpIfFalse(usize), // Переход если вершина стека false
     Call,
     Return_,
 
@@ -53,4 +53,7 @@ pub enum OpCode {
     DefineGlobal(usize),
     SetGlobal(usize),
     GetGlobal(usize),
+
+    Halt, // Данный опкод не никак не обрабатывается и нужен только чтобы jump'у в конце выражения
+          // было куда переходить
 }

@@ -9,9 +9,9 @@ mod symbol_table;
 mod value;
 mod vm;
 
-use std::path::PathBuf;
 use module::{ModuleResolver, merge_module_ast};
 use name_resolver::NameResolver;
+use std::path::PathBuf;
 use symbol_table::SymbolTable;
 
 pub struct Ponos {
@@ -53,7 +53,8 @@ impl Ponos {
         self.process_imports(&mut ast, file_path.as_deref());
 
         // 3. Разрешение имён (преобразование FieldAccess в ModuleAccess)
-        self.name_resolver.resolve(&mut ast, &self.symbol_table)
+        self.name_resolver
+            .resolve(&mut ast, &self.symbol_table)
             .expect("Ошибка разрешения имён");
         println!("ast после разрешения имён:\n{:#?}", ast);
 
@@ -70,8 +71,8 @@ impl Ponos {
     /// Обработать импорты в AST: загрузить модули и зарегистрировать их
     fn process_imports(&mut self, ast: &mut ast::Program, from_file: Option<&std::path::Path>) {
         use ast::Statement;
-        use symbol_table::Symbol;
         use span::Span;
+        use symbol_table::Symbol;
 
         // Собираем все импорты из AST
         let mut imports = Vec::new();
@@ -90,7 +91,10 @@ impl Ponos {
                 &mut self.symbol_table,
             ) {
                 Ok(loaded_module) => {
-                    println!("Загружен модуль: {} (пространство имён: {})", path, loaded_module.namespace);
+                    println!(
+                        "Загружен модуль: {} (пространство имён: {})",
+                        path, loaded_module.namespace
+                    );
 
                     // Регистрируем пространство имён как Symbol::Module в текущей области
                     let module_symbol = Symbol::new_module(
@@ -100,7 +104,10 @@ impl Ponos {
                     );
 
                     if let Err(e) = self.symbol_table.define(module_symbol) {
-                        eprintln!("Предупреждение: не удалось зарегистрировать модуль '{}': {}", loaded_module.namespace, e);
+                        eprintln!(
+                            "Предупреждение: не удалось зарегистрировать модуль '{}': {}",
+                            loaded_module.namespace, e
+                        );
                     }
 
                     // Добавляем AST модуля в основной AST

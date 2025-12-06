@@ -20,7 +20,7 @@ pub enum Statement {
     InterfaceDecl(InterfaceDecl),
     AnnotationDecl(AnnotationDecl),
     Import(ImportStatement),
-    ModuleBlock(ModuleBlock),  // Блок кода модуля с пространством имен
+    ModuleBlock(ModuleBlock), // Блок кода модуля с пространством имен
     If(IfStatement),
     While(WhileStatement),
     Return(ReturnStatement),
@@ -106,8 +106,8 @@ pub struct AssignmentStatement {
 #[derive(Debug, Clone)]
 pub struct ClassDecl {
     pub name: String,
-    pub extends: Option<String>,  // Родительский класс
-    pub implements: Vec<String>,  // Реализуемые интерфейсы
+    pub extends: Option<String>, // Родительский класс
+    pub implements: Vec<String>, // Реализуемые интерфейсы
     pub members: Vec<ClassMember>,
     pub annotations: Vec<Annotation>,
     pub is_exported: bool,
@@ -116,7 +116,10 @@ pub struct ClassDecl {
 
 #[derive(Debug, Clone)]
 pub enum ClassMember {
-    Field { name: String, type_annotation: Option<String> },
+    Field {
+        name: String,
+        type_annotation: Option<String>,
+    },
     Method(FuncDecl),
     Constructor(ConstructorDecl),
 }
@@ -156,14 +159,14 @@ pub struct AnnotationDecl {
 #[derive(Debug, Clone)]
 pub struct ImportStatement {
     pub path: String,
-    pub alias: Option<String>,  // Переименование: использовать "модуль" как псевдоним
+    pub alias: Option<String>, // Переименование: использовать "модуль" как псевдоним
     pub span: Span,
 }
 
 #[derive(Debug, Clone)]
 pub struct ModuleBlock {
-    pub namespace: String,           // Имя пространства имен
-    pub statements: Vec<Statement>,  // Statements модуля
+    pub namespace: String,          // Имя пространства имен
+    pub statements: Vec<Statement>, // Statements модуля
     pub span: Span,
 }
 
@@ -257,8 +260,10 @@ impl BinaryOperator {
             BinaryOperator::Or => 1,
             BinaryOperator::And => 2,
             BinaryOperator::Equal | BinaryOperator::NotEqual => 3,
-            BinaryOperator::Less | BinaryOperator::LessEqual |
-            BinaryOperator::Greater | BinaryOperator::GreaterEqual => 4,
+            BinaryOperator::Less
+            | BinaryOperator::LessEqual
+            | BinaryOperator::Greater
+            | BinaryOperator::GreaterEqual => 4,
             BinaryOperator::Add | BinaryOperator::Subtract => 5,
             BinaryOperator::Multiply | BinaryOperator::Divide => 6,
         }
@@ -299,8 +304,8 @@ pub struct FieldAccessExpr {
 
 #[derive(Debug, Clone)]
 pub struct ModuleAccessExpr {
-    pub namespace: String,  // Имя пространства имен (математика, мат)
-    pub symbol: String,      // Имя символа (корень, ПИ)
+    pub namespace: String, // Имя пространства имен (математика, мат)
+    pub symbol: String,    // Имя символа (корень, ПИ)
     pub span: Span,
 }
 

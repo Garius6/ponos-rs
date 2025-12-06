@@ -69,10 +69,9 @@ impl<'a> VM {
                         .stack
                         .pop()
                         .expect("Стек пуст при присваивании локальной переменной");
-                    let slot_ref = self
-                        .locals
-                        .get_mut(slot)
-                        .unwrap_or_else(|| panic!("Локальная переменная в слоте {slot} не найдена"));
+                    let slot_ref = self.locals.get_mut(slot).unwrap_or_else(|| {
+                        panic!("Локальная переменная в слоте {slot} не найдена")
+                    });
                     *slot_ref = value;
                 }
                 opcode::OpCode::DefineLocal(slot) => {
@@ -89,9 +88,31 @@ impl<'a> VM {
                 opcode::OpCode::GetUpvalue => todo!(),
                 opcode::OpCode::SetUpvalue => todo!(),
                 opcode::OpCode::CloseUpvalues => todo!(),
-                opcode::OpCode::Jump => todo!(),
-                opcode::OpCode::JumpIfTrue => todo!(),
-                opcode::OpCode::JumpIfFalse => todo!(),
+                opcode::OpCode::Jump(addr) => {
+                    // Безусловный переход
+                    ip = addr;
+                    continue; // Пропускаем ip += 1 в конце цикла
+                }
+                opcode::OpCode::JumpIfTrue(addr) => {
+                    let condition = self
+                        .stack
+                        .pop()
+                        .expect("Стек пуст при проверке условия JumpIfTrue");
+                    if let Value::Boolean(true) = condition {
+                        ip = addr;
+                        continue; // Пропускаем ip += 1 в конце цикла
+                    }
+                }
+                opcode::OpCode::JumpIfFalse(addr) => {
+                    let condition = self
+                        .stack
+                        .pop()
+                        .expect("Стек пуст при проверке условия JumpIfFalse");
+                    if let Value::Boolean(false) = condition {
+                        ip = addr;
+                        continue; // Пропускаем ip += 1 в конце цикла
+                    }
+                }
                 opcode::OpCode::Call => todo!(),
                 opcode::OpCode::Return_ => todo!(),
                 opcode::OpCode::Pop => todo!(),
@@ -122,9 +143,10 @@ impl<'a> VM {
                         .pop()
                         .expect("Стек пуст при присваивании глобальной переменной");
 
-                    let slot = self.globals.get_mut(&name).unwrap_or_else(|| {
-                        panic!("Глобальная переменная {name} не найдена")
-                    });
+                    let slot = self
+                        .globals
+                        .get_mut(&name)
+                        .unwrap_or_else(|| panic!("Глобальная переменная {name} не найдена"));
 
                     *slot = value;
                 }
@@ -134,12 +156,11 @@ impl<'a> VM {
                         .globals
                         .get(&name)
                         .cloned()
-                        .unwrap_or_else(|| {
-                            panic!("Глобальная переменная {name} не найдена")
-                        });
+                        .unwrap_or_else(|| panic!("Глобальная переменная {name} не найдена"));
 
                     self.stack.push(value);
                 }
+                opcode::OpCode::Halt => {}
             };
 
             ip += 1;
@@ -231,7 +252,7 @@ mod tests {
         let mut vm = VM::new();
         let mut constants = vec![
             Value::String("мат::ПИ".to_string()), // 0 - манглированное имя
-            Value::Number(3.14),                   // 1
+            Value::Number(3.14),                  // 1
         ];
 
         let opcodes = vec![

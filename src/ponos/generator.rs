@@ -1,10 +1,9 @@
 pub struct Generator {}
 
 use crate::ponos::ast::UnaryOperator;
+use crate::ponos::opcode;
 
-use super::ast::{
-    AstNode, AssignmentTarget, Expression, ImportStatement, Statement,
-};
+use super::ast::{AssignmentTarget, AstNode, Expression, Statement};
 use super::opcode::OpCode;
 use super::value::Value;
 use std::collections::HashMap;
@@ -33,6 +32,7 @@ impl Generator {
             }
             _ => panic!("Неверно сгенерировано ast"),
         }
+        context.opcodes.push(OpCode::Halt);
         context
     }
 
@@ -80,9 +80,6 @@ impl Generator {
                     // ExportSymbol больше не нужен - экспорты обрабатываются на этапе разрешения имен
                 }
             }
-            Statement::Import(_import_stmt) => {
-                // Import больше не генерирует опкоды - всё обработано на этапе разрешения имен
-            }
             Statement::Assignment(assign) => {
                 self.emit_expression(assign.value, ctx);
                 match assign.target {
@@ -121,6 +118,35 @@ impl Generator {
 
                 // Восстанавливаем предыдущее пространство имен
                 ctx.current_namespace = previous_namespace;
+            }
+            Statement::If(if_statement) => {
+                self.emit_expression(if_statement.condition, ctx);
+                let jmp_false = self.emit_jump(ctx, OpCode::JumpIfFalse(0));
+                for stmt in if_statement.then_branch {
+                    self.emit_statement(stmt, ctx);
+                }
+
+                let jmp_end = self.emit_jump(ctx, OpCode::Jump(0));
+                self.patch_jump(ctx, jmp_false);
+                match if_statement.else_branch {
+                    Some(block) => {
+                        for stmt in block {
+                            self.emit_statement(stmt, ctx);
+                        }
+                    }
+                    None => {}
+                }
+                self.patch_jump(ctx, jmp_end);
+            }
+            Statement::While(while_statement) => {
+                let cond_pos = ctx.opcodes.len();
+                self.emit_expression(while_statement.condition, ctx);
+                let jmp_false = self.emit_jump(ctx, OpCode::JumpIfFalse(0));
+                for stmt in while_statement.body {
+                    self.emit_statement(stmt, ctx);
+                }
+                ctx.opcodes.push(OpCode::Jump(cond_pos));
+                self.patch_jump(ctx, jmp_false);
             }
             _ => unimplemented!(),
         }
@@ -200,6 +226,20 @@ impl Generator {
         }
     }
 
+    fn emit_jump(&self, ctx: &mut GenContext, opcode: OpCode) -> usize {
+        // Добавляем опкод с placeholder адресом (0)
+        let placeholder_opcode = match opcode {
+            OpCode::Jump(_) => OpCode::Jump(0),
+            OpCode::JumpIfTrue(_) => OpCode::JumpIfTrue(0),
+            OpCode::JumpIfFalse(_) => OpCode::JumpIfFalse(0),
+            _ => panic!("emit_jump вызван с неправильным опкодом"),
+        };
+
+        ctx.opcodes.push(placeholder_opcode);
+        // Возвращаем индекс добавленного опкода
+        ctx.opcodes.len() - 1
+    }
+
     /// Применить манглинг имени переменной с учетом текущего пространства имен
     fn mangle_name(&self, name: &str, ctx: &GenContext) -> String {
         if let Some(namespace) = &ctx.current_namespace {
@@ -234,7 +274,6 @@ impl Generator {
         ctx.opcodes.push(OpCode::DefineLocal(slot));
     }
 
-
     fn intern_string(&mut self, value: &str, ctx: &mut GenContext) -> usize {
         self.intern_constant(Value::String(value.to_string()), ctx)
     }
@@ -246,6 +285,21 @@ impl Generator {
             ctx.constants.push(value);
             ctx.constants.len() - 1
         }
+    }
+
+    fn patch_jump(&self, ctx: &mut GenContext, operand_pos: usize) {
+        // Вычисляем адрес куда нужно прыгнуть (текущая позиция)
+        let jump_target = ctx.opcodes.len();
+
+        // Заменяем опкод на тот же тип, но с правильным адресом
+        let patched_opcode = match ctx.opcodes[operand_pos] {
+            OpCode::Jump(_) => OpCode::Jump(jump_target),
+            OpCode::JumpIfTrue(_) => OpCode::JumpIfTrue(jump_target),
+            OpCode::JumpIfFalse(_) => OpCode::JumpIfFalse(jump_target),
+            _ => panic!("patch_jump вызван для не-jump опкода"),
+        };
+
+        ctx.opcodes[operand_pos] = patched_opcode;
     }
 }
 
@@ -276,17 +330,11 @@ mod tests {
 
         assert_eq!(
             ctx.opcodes,
-            vec![
-                OpCode::Constant(0),
-                OpCode::DefineGlobal(1)
-            ]
+            vec![OpCode::Constant(0), OpCode::DefineGlobal(1), OpCode::Halt]
         );
         assert_eq!(
             ctx.constants,
-            vec![
-                Value::Number(42.0),
-                Value::String("a".to_string())
-            ]
+            vec![Value::Number(42.0), Value::String("a".to_string())]
         );
     }
 
@@ -294,15 +342,13 @@ mod tests {
     fn honors_module_declaration_and_exports() {
         // Экспорты обрабатываются на этапе разрешения имен
         let program = Program {
-            statements: vec![
-                Statement::VarDecl(VarDecl {
-                    name: "x".to_string(),
-                    type_annotation: None,
-                    initializer: Some(number_expr(1.0)),
-                    is_exported: true,
-                    span: Span::default(),
-                }),
-            ],
+            statements: vec![Statement::VarDecl(VarDecl {
+                name: "x".to_string(),
+                type_annotation: None,
+                initializer: Some(number_expr(1.0)),
+                is_exported: true,
+                span: Span::default(),
+            })],
         };
 
         let mut generator = Generator::new();
@@ -311,18 +357,12 @@ mod tests {
         // Теперь просто генерируется переменная, без опкодов модулей
         assert_eq!(
             ctx.opcodes,
-            vec![
-                OpCode::Constant(0),
-                OpCode::DefineGlobal(1),
-            ]
+            vec![OpCode::Constant(0), OpCode::DefineGlobal(1), OpCode::Halt]
         );
 
         assert_eq!(
             ctx.constants,
-            vec![
-                Value::Number(1.0),
-                Value::String("x".to_string())
-            ]
+            vec![Value::Number(1.0), Value::String("x".to_string())]
         );
     }
 
@@ -360,9 +400,54 @@ mod tests {
             ]
         );
 
-        assert_eq!(
-            ctx.constants,
-            vec![Value::Number(1.0), Value::Number(2.0)]
-        );
+        assert_eq!(ctx.constants, vec![Value::Number(1.0), Value::Number(2.0)]);
+    }
+
+    #[test]
+    fn generates_if_statement_with_else() {
+        use crate::ponos::ast::{BinaryExpr, BinaryOperator, IfStatement};
+
+        // если x > 5 то
+        //     y = 10
+        // иначе
+        //     y = 20
+        // конец
+        let condition = Expression::Binary(Box::new(BinaryExpr {
+            left: Expression::Identifier("x".to_string(), Span::default()),
+            operator: BinaryOperator::Greater,
+            right: number_expr(5.0),
+            span: Span::default(),
+        }));
+
+        let then_branch = vec![Statement::Assignment(
+            crate::ponos::ast::AssignmentStatement {
+                target: crate::ponos::ast::AssignmentTarget::Identifier("y".to_string()),
+                value: number_expr(10.0),
+                span: Span::default(),
+            },
+        )];
+
+        let else_branch = vec![Statement::Assignment(
+            crate::ponos::ast::AssignmentStatement {
+                target: crate::ponos::ast::AssignmentTarget::Identifier("y".to_string()),
+                value: number_expr(20.0),
+                span: Span::default(),
+            },
+        )];
+
+        let program = Program {
+            statements: vec![Statement::If(IfStatement {
+                condition,
+                then_branch,
+                else_branch: Some(else_branch),
+                span: Span::default(),
+            })],
+        };
+
+        let mut generator = Generator::new();
+        let ctx = generator.generate(AstNode::Program(program));
+
+        assert!(matches!(ctx.opcodes[3], OpCode::JumpIfFalse(7)));
+        assert!(matches!(ctx.opcodes[6], OpCode::Jump(9)));
     }
 }
