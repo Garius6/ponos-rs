@@ -25,16 +25,16 @@ pub enum OpCode {
     SetLocal(usize),
 
     // замыкания
-    Closure,
-    GetUpvalue,
-    SetUpvalue,
-    CloseUpvalues,
+    Closure(usize, usize),
+    GetUpvalue(usize),
+    SetUpvalue(usize),
+    CloseUpvalues(usize),
 
     // поток выполнения
     Jump(usize),        // Безусловный переход на абсолютный адрес
     JumpIfTrue(usize),  // Переход если вершина стека true
     JumpIfFalse(usize), // Переход если вершина стека false
-    Call,
+    Call(usize),
     Return_,
 
     // работа со стеком

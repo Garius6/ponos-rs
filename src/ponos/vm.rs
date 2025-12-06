@@ -1,35 +1,72 @@
-use std::collections::HashMap;
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use crate::ponos::{
-    opcode::{self},
-    value::{self, Value},
+    opcode::OpCode,
+    value::{self, Closure, Function, NativeFnId, Upvalue, Value},
 };
+
+#[derive(Debug)]
+struct CallFrame {
+    opcodes: Vec<OpCode>,
+    constants: Vec<Value>,
+    ip: usize,
+    base: usize, // Базовый индекс в стеке
+    upvalues: Vec<Rc<RefCell<Upvalue>>>,
+}
+
+type NativeFn = fn(&[Value]) -> Result<Value, String>;
 
 pub struct VM {
     pub stack: Vec<Value>,
-    locals: Vec<Value>,
     globals: HashMap<String, Value>, // Плоское пространство глобальных переменных
+    frames: Vec<CallFrame>,
+    native_functions: Vec<NativeFn>,
+    open_upvalues: Vec<Rc<RefCell<Upvalue>>>,
 }
 
 impl<'a> VM {
     pub fn new() -> Self {
         VM {
             stack: Vec::new(),
-            locals: Vec::new(),
             globals: HashMap::new(),
+            frames: Vec::new(),
+            native_functions: Vec::new(),
+            open_upvalues: Vec::new(),
         }
     }
 
-    pub fn execute(&mut self, opcodes: Vec<opcode::OpCode>, constants: &mut Vec<Value>) {
-        let mut ip: usize = 0;
-        loop {
-            let cur_opcode = opcodes[ip];
+    pub fn execute(&mut self, opcodes: Vec<OpCode>, constants: &mut Vec<Value>) {
+        self.frames.push(CallFrame {
+            opcodes,
+            constants: constants.clone(),
+            ip: 0,
+            base: 0,
+            upvalues: Vec::new(),
+        });
+
+        while !self.frames.is_empty() {
+            let frame_idx = self.frames.len() - 1;
+
+            if self.frames[frame_idx].ip >= self.frames[frame_idx].opcodes.len() {
+                // Автоматический return
+                if self.frames.len() == 1 {
+                    break;
+                }
+                self.stack.push(Value::Nil);
+                let base = self.frames[frame_idx].base;
+                self.frames.pop();
+                self.stack.truncate(base);
+                continue;
+            }
+
+            let cur_opcode = self.frames[frame_idx].opcodes[self.frames[frame_idx].ip];
 
             match cur_opcode {
-                opcode::OpCode::Constant(idx) => {
-                    self.stack.push(constants[idx].clone());
+                OpCode::Constant(idx) => {
+                    self.stack
+                        .push(self.frames[frame_idx].constants[idx].clone());
                 }
-                opcode::OpCode::Negate => {
+                OpCode::Negate => {
                     let a = match self.stack.pop().unwrap() {
                         Value::Number(n) => n,
                         _ => panic!("Operand not a number"),
@@ -37,14 +74,14 @@ impl<'a> VM {
 
                     self.stack.push(Value::Number(-a));
                 }
-                opcode::OpCode::Add => self.binary_number_op(|a, b| a + b),
-                opcode::OpCode::Sub => self.binary_number_op(|a, b| a - b),
-                opcode::OpCode::Mul => self.binary_number_op(|a, b| a * b),
-                opcode::OpCode::Div => self.binary_number_op(|a, b| a / b),
-                opcode::OpCode::True_ => self.stack.push(Value::Boolean(true)),
-                opcode::OpCode::False_ => self.stack.push(Value::Boolean(false)),
-                opcode::OpCode::Eql => self.binary_logical_op(|a, b| value::is_equal(&a, &b)),
-                opcode::OpCode::Not => {
+                OpCode::Add => self.binary_number_op(|a, b| a + b),
+                OpCode::Sub => self.binary_number_op(|a, b| a - b),
+                OpCode::Mul => self.binary_number_op(|a, b| a * b),
+                OpCode::Div => self.binary_number_op(|a, b| a / b),
+                OpCode::True_ => self.stack.push(Value::Boolean(true)),
+                OpCode::False_ => self.stack.push(Value::Boolean(false)),
+                OpCode::Eql => self.binary_logical_op(|a, b| value::is_equal(&a, &b)),
+                OpCode::Not => {
                     let val = match self.stack.pop().unwrap() {
                         Value::Boolean(b) => b,
                         _ => panic!("Значение не булевого типа"),
@@ -52,78 +89,158 @@ impl<'a> VM {
 
                     self.stack.push(Value::Boolean(!val));
                 }
-                opcode::OpCode::Greater => self.binary_logical_op(|a, b| value::is_greater(&a, &b)),
-                opcode::OpCode::Less => self.binary_logical_op(|a, b| {
+                OpCode::Greater => self.binary_logical_op(|a, b| value::is_greater(&a, &b)),
+                OpCode::Less => self.binary_logical_op(|a, b| {
                     !value::is_greater(&a, &b) && !value::is_equal(&a, &b)
                 }),
-                opcode::OpCode::GetLocal(slot) => {
-                    let value = self
-                        .locals
-                        .get(slot)
-                        .unwrap_or_else(|| panic!("Локальная переменная в слоте {slot} не найдена"))
-                        .clone();
+                OpCode::GetLocal(slot) => {
+                    let index = self.frames[frame_idx].base + slot;
+                    let value = self.stack.get(index).cloned().unwrap_or(Value::Nil);
                     self.stack.push(value);
                 }
-                opcode::OpCode::SetLocal(slot) => {
-                    let value = self
-                        .stack
-                        .pop()
-                        .expect("Стек пуст при присваивании локальной переменной");
-                    let slot_ref = self.locals.get_mut(slot).unwrap_or_else(|| {
-                        panic!("Локальная переменная в слоте {slot} не найдена")
-                    });
-                    *slot_ref = value;
-                }
-                opcode::OpCode::DefineLocal(slot) => {
-                    let value = self
-                        .stack
-                        .pop()
-                        .expect("Стек пуст при определении локальной переменной");
-                    if slot >= self.locals.len() {
-                        self.locals.resize(slot + 1, Value::Nil);
+                OpCode::SetLocal(slot) => {
+                    let value = self.stack.pop().expect("Стек пуст");
+                    let index = self.frames[frame_idx].base + slot;
+
+                    if index >= self.stack.len() {
+                        self.stack.resize(index + 1, Value::Nil);
                     }
-                    self.locals[slot] = value;
+                    self.stack[index] = value;
                 }
-                opcode::OpCode::Closure => todo!(),
-                opcode::OpCode::GetUpvalue => todo!(),
-                opcode::OpCode::SetUpvalue => todo!(),
-                opcode::OpCode::CloseUpvalues => todo!(),
-                opcode::OpCode::Jump(addr) => {
+                OpCode::DefineLocal(slot) => {
+                    // Pop значение с evaluation stack и сохранить в слот локальной переменной
+                    let value = self.stack.pop().expect("Стек пуст");
+                    let index = self.frames[frame_idx].base + slot;
+
+                    // Убеждаемся, что в стеке достаточно места для всех локальных переменных
+                    // Локальные переменные идут сразу после base
+                    while self.stack.len() <= index {
+                        self.stack.push(Value::Nil);
+                    }
+                    self.stack[index] = value;
+                }
+                OpCode::Closure(fn_const_idx, _upvalue_count) => {
+                    // Получаем функцию из константного пула
+                    let function = match &self.frames[frame_idx].constants[fn_const_idx] {
+                        Value::Function(f) => f.clone(),
+                        other => panic!(
+                            "Ожидалась функция в константном пуле по индексу {}, но найдено: {:?}",
+                            fn_const_idx, other
+                        ),
+                    };
+
+                    // Создаем upvalues для замыкания на основе дескрипторов из функции
+                    let mut upvalues = Vec::new();
+                    for descriptor in &function.upvalue_descriptors {
+                        if descriptor.is_local {
+                            // Захватываем локальную переменную из текущего фрейма
+                            let stack_index = self.frames[frame_idx].base + descriptor.index;
+
+                            // Проверяем, не создан ли уже upvalue для этого слота
+                            let upvalue = self.capture_upvalue(stack_index);
+                            upvalues.push(upvalue);
+                        } else {
+                            // Захватываем upvalue из родительского замыкания
+                            let parent_upvalue =
+                                self.frames[frame_idx].upvalues[descriptor.index].clone();
+                            upvalues.push(parent_upvalue);
+                        }
+                    }
+
+                    // Создаем замыкание
+                    let closure = Closure {
+                        function: (*function).clone(),
+                        upvalues,
+                    };
+
+                    self.stack.push(Value::Closure(Rc::new(closure)));
+                }
+                OpCode::GetUpvalue(index) => {
+                    let frame = &self.frames[frame_idx];
+                    let upvalue = &frame.upvalues[index];
+
+                    let value = match &*upvalue.borrow() {
+                        Upvalue::Open(stack_idx) => self.stack[*stack_idx].clone(),
+                        Upvalue::Closed(val) => val.clone(),
+                    };
+
+                    self.stack.push(value);
+                }
+                OpCode::SetUpvalue(index) => {
+                    let value = self.stack.pop().expect("Стек пуст");
+                    let frame = &self.frames[frame_idx];
+                    let upvalue = &frame.upvalues[index];
+
+                    let mut upval = upvalue.borrow_mut();
+                    match &mut *upval {
+                        Upvalue::Open(stack_idx) => {
+                            self.stack[*stack_idx] = value;
+                        }
+                        Upvalue::Closed(val) => {
+                            *val = value;
+                        }
+                    }
+                }
+                OpCode::CloseUpvalues(local_count) => {
+                    let frame = &self.frames[frame_idx];
+                    let threshold = frame.base + local_count;
+                    self.close_upvalues_from(threshold);
+                }
+                OpCode::Jump(addr) => {
                     // Безусловный переход
-                    ip = addr;
-                    continue; // Пропускаем ip += 1 в конце цикла
+                    self.frames[frame_idx].ip = addr;
+                    continue;
                 }
-                opcode::OpCode::JumpIfTrue(addr) => {
+                OpCode::JumpIfTrue(addr) => {
                     let condition = self
                         .stack
                         .pop()
                         .expect("Стек пуст при проверке условия JumpIfTrue");
                     if let Value::Boolean(true) = condition {
-                        ip = addr;
-                        continue; // Пропускаем ip += 1 в конце цикла
+                        self.frames[frame_idx].ip = addr;
+                        continue;
                     }
                 }
-                opcode::OpCode::JumpIfFalse(addr) => {
+                OpCode::JumpIfFalse(addr) => {
                     let condition = self
                         .stack
                         .pop()
                         .expect("Стек пуст при проверке условия JumpIfFalse");
                     if let Value::Boolean(false) = condition {
-                        ip = addr;
-                        continue; // Пропускаем ip += 1 в конце цикла
+                        self.frames[frame_idx].ip = addr;
+                        continue;
                     }
                 }
-                opcode::OpCode::Call => todo!(),
-                opcode::OpCode::Return_ => todo!(),
-                opcode::OpCode::Pop => todo!(),
-                opcode::OpCode::Push => todo!(),
-                opcode::OpCode::Class => todo!(),
-                opcode::OpCode::Instance => todo!(),
-                opcode::OpCode::GetProperty => todo!(),
-                opcode::OpCode::SetProperty => todo!(),
-                opcode::OpCode::Invoke => todo!(),
-                opcode::OpCode::GetSuper => todo!(),
-                opcode::OpCode::DefineGlobal(name_idx) => {
+                OpCode::Call(arg_count) => {
+                    let callee_idx = self.stack.len() - arg_count - 1;
+                    let callee = self.stack[callee_idx].clone();
+
+                    match callee {
+                        Value::Function(func) => self.call_function(func, arg_count).unwrap(),
+                        Value::Closure(closure) => self.call_closure(closure, arg_count).unwrap(),
+                        Value::NativeFunction(id) => self.call_native(id, arg_count).unwrap(),
+                        _ => panic!("Попытка вызвать не-функцию"),
+                    }
+                }
+                OpCode::Return_ => {
+                    let return_value = self.stack.pop().unwrap_or(Value::Nil);
+                    let base = self.frames[frame_idx].base;
+
+                    self.close_upvalues_from(base);
+                    self.frames.pop().expect("Пустой стек вызовов");
+                    self.stack.truncate(base);
+                    self.stack.push(return_value);
+                    continue;
+                }
+                OpCode::Pop => todo!(),
+                OpCode::Push => todo!(),
+                OpCode::Class => todo!(),
+                OpCode::Instance => todo!(),
+                OpCode::GetProperty => todo!(),
+                OpCode::SetProperty => todo!(),
+                OpCode::Invoke => todo!(),
+                OpCode::GetSuper => todo!(),
+                OpCode::DefineGlobal(name_idx) => {
                     let name = self.expect_string(constants, name_idx);
                     let value = self
                         .stack
@@ -136,7 +253,7 @@ impl<'a> VM {
 
                     self.globals.insert(name, value);
                 }
-                opcode::OpCode::SetGlobal(name_idx) => {
+                OpCode::SetGlobal(name_idx) => {
                     let name = self.expect_string(constants, name_idx);
                     let value = self
                         .stack
@@ -150,7 +267,7 @@ impl<'a> VM {
 
                     *slot = value;
                 }
-                opcode::OpCode::GetGlobal(name_idx) => {
+                OpCode::GetGlobal(name_idx) => {
                     let name = self.expect_string(constants, name_idx);
                     let value = self
                         .globals
@@ -160,12 +277,11 @@ impl<'a> VM {
 
                     self.stack.push(value);
                 }
-                opcode::OpCode::Halt => {}
+                OpCode::Halt => {}
             };
 
-            ip += 1;
-            if ip >= opcodes.len() {
-                break;
+            if frame_idx < self.frames.len() {
+                self.frames[frame_idx].ip += 1;
             }
         }
     }
@@ -203,6 +319,101 @@ impl<'a> VM {
             _ => panic!("Ожидалась строка в пуле констант по индексу {idx}"),
         }
     }
+
+    fn call_function(&mut self, func: Rc<Function>, arg_count: usize) -> Result<(), String> {
+        if arg_count != func.arity {
+            return Err(format!(
+                "Ожидается {} аргументов, передано {}",
+                func.arity, arg_count
+            ));
+        }
+
+        let base = self.stack.len() - arg_count;
+        self.stack.remove(base - 1); // Удалить callee
+
+        self.frames.push(CallFrame {
+            opcodes: func.opcodes.clone(),
+            constants: func.constants.clone(),
+            ip: 0,
+            base,
+            upvalues: Vec::new(),
+        });
+
+        Ok(())
+    }
+
+    fn call_closure(&mut self, closure: Rc<Closure>, arg_count: usize) -> Result<(), String> {
+        if arg_count != closure.function.arity {
+            return Err(format!(
+                "Ожидается {} аргументов, передано {}",
+                closure.function.arity, arg_count
+            ));
+        }
+
+        let base = self.stack.len() - arg_count;
+        self.stack.remove(base - 1);
+
+        self.frames.push(CallFrame {
+            opcodes: closure.function.opcodes.clone(),
+            constants: closure.function.constants.clone(),
+            ip: 0,
+            base,
+            upvalues: closure.upvalues.clone(),
+        });
+
+        Ok(())
+    }
+
+    fn call_native(&mut self, id: NativeFnId, arg_count: usize) -> Result<(), String> {
+        let args_start = self.stack.len() - arg_count;
+        let args: Vec<Value> = self.stack.drain(args_start..).collect();
+
+        self.stack.pop(); // Удалить callee
+
+        let native_fn = self.native_functions[id.0];
+        let result = native_fn(&args)?;
+
+        self.stack.push(result);
+        Ok(())
+    }
+
+    fn capture_upvalue(&mut self, stack_index: usize) -> Rc<RefCell<Upvalue>> {
+        // Ищем существующий открытый upvalue для этого индекса стека
+        for upvalue in &self.open_upvalues {
+            if let Upvalue::Open(idx) = *upvalue.borrow() {
+                if idx == stack_index {
+                    return upvalue.clone();
+                }
+            }
+        }
+
+        // Создаем новый открытый upvalue
+        let new_upvalue = Rc::new(RefCell::new(Upvalue::Open(stack_index)));
+        self.open_upvalues.push(new_upvalue.clone());
+        new_upvalue
+    }
+
+    fn close_upvalues_from(&mut self, stack_index: usize) {
+        for upvalue in &self.open_upvalues {
+            let mut upval = upvalue.borrow_mut();
+            if let Upvalue::Open(idx) = *upval {
+                if idx >= stack_index {
+                    *upval = Upvalue::Closed(self.stack[idx].clone());
+                }
+            }
+        }
+    }
+
+    fn register_native(&mut self, func: NativeFn) -> NativeFnId {
+        let id = NativeFnId(self.native_functions.len());
+        self.native_functions.push(func);
+        id
+    }
+    pub fn register_and_define(&mut self, name: &str, func: NativeFn) {
+        let id = self.register_native(func);
+        self.globals
+            .insert(name.to_string(), Value::NativeFunction(id));
+    }
 }
 
 #[cfg(test)]
@@ -215,11 +426,11 @@ mod tests {
         let mut constants = vec![Value::Number(1.0), Value::Number(2.0)];
 
         let opcodes = vec![
-            opcode::OpCode::Constant(0),
-            opcode::OpCode::DefineLocal(0),
-            opcode::OpCode::Constant(1),
-            opcode::OpCode::SetLocal(0),
-            opcode::OpCode::GetLocal(0),
+            OpCode::Constant(0),
+            OpCode::DefineLocal(0),
+            OpCode::Constant(1),
+            OpCode::SetLocal(0),
+            OpCode::GetLocal(0),
         ];
 
         vm.execute(opcodes, &mut constants);
@@ -236,9 +447,9 @@ mod tests {
         ];
 
         let opcodes = vec![
-            opcode::OpCode::Constant(1),
-            opcode::OpCode::DefineGlobal(0),
-            opcode::OpCode::GetGlobal(0),
+            OpCode::Constant(1),
+            OpCode::DefineGlobal(0),
+            OpCode::GetGlobal(0),
         ];
 
         vm.execute(opcodes, &mut constants);
@@ -256,9 +467,9 @@ mod tests {
         ];
 
         let opcodes = vec![
-            opcode::OpCode::Constant(1),
-            opcode::OpCode::DefineGlobal(0),
-            opcode::OpCode::GetGlobal(0),
+            OpCode::Constant(1),
+            OpCode::DefineGlobal(0),
+            OpCode::GetGlobal(0),
         ];
 
         vm.execute(opcodes, &mut constants);

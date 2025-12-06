@@ -2,6 +2,7 @@ mod ast;
 mod generator;
 mod module;
 mod name_resolver;
+mod native;
 mod opcode;
 mod parser;
 mod span;
@@ -26,10 +27,11 @@ pub struct Ponos {
 impl Ponos {
     pub fn new() -> Self {
         let parser = parser::PonosParser::new();
+        let vm = vm::VM::new();
 
         return Ponos {
             parser: parser,
-            vm: vm::VM::new(),
+            vm: vm,
             generator: generator::Generator::new(),
             module_resolver: ModuleResolver::new(),
             name_resolver: NameResolver::new(),
@@ -95,6 +97,21 @@ impl Ponos {
                         "Загружен модуль: {} (пространство имён: {})",
                         path, loaded_module.namespace
                     );
+
+                    // Если это нативный модуль, регистрируем его функции в VM
+                    if loaded_module.file_path.to_str().unwrap_or("").starts_with("<native:") {
+                        let native_registry = self.module_resolver.native_registry();
+                        if let Err(e) = native_registry.register_module_in_vm(
+                            &path,
+                            &loaded_module.namespace,
+                            &mut self.vm,
+                        ) {
+                            eprintln!(
+                                "Предупреждение: не удалось зарегистрировать нативные функции для '{}': {}",
+                                path, e
+                            );
+                        }
+                    }
 
                     // Регистрируем пространство имён как Symbol::Module в текущей области
                     let module_symbol = Symbol::new_module(

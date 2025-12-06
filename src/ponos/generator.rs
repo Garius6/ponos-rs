@@ -1,13 +1,15 @@
 pub struct Generator {}
 
-use crate::ponos::ast::UnaryOperator;
-use crate::ponos::opcode;
+use crate::ponos::ast::{Parameter, UnaryOperator};
+use crate::ponos::value::{Function, UpvalueDescriptor};
 
 use super::ast::{AssignmentTarget, AstNode, Expression, Statement};
 use super::opcode::OpCode;
 use super::value::Value;
 use std::collections::HashMap;
+use std::rc::Rc;
 
+#[derive(Clone)]
 pub struct GenContext {
     pub constants: Vec<Value>,
     pub opcodes: Vec<OpCode>,
@@ -15,6 +17,15 @@ pub struct GenContext {
     pub in_function: bool,
     local_slots: HashMap<String, usize>,
     next_local_slot: usize,
+    parent_context: Option<Box<GenContext>>,
+    upvalues: Vec<UpvalueInfo>,
+}
+
+#[derive(Clone)]
+struct UpvalueInfo {
+    name: String,
+    is_local: bool,
+    index: usize,
 }
 
 impl Generator {
@@ -52,6 +63,8 @@ impl Generator {
             in_function,
             local_slots: HashMap::new(),
             next_local_slot: 0,
+            parent_context: None,
+            upvalues: Vec::new(),
         }
     }
 
@@ -85,9 +98,16 @@ impl Generator {
                 match assign.target {
                     AssignmentTarget::Identifier(name) => {
                         if ctx.in_function {
+                            // Сначала проверяем локальные переменные
                             if let Some(slot) = ctx.local_slots.get(&name) {
                                 ctx.opcodes.push(OpCode::SetLocal(*slot));
-                            } else {
+                            }
+                            // Затем проверяем upvalues
+                            else if let Some(upvalue_idx) = self.resolve_upvalue(&name, ctx) {
+                                ctx.opcodes.push(OpCode::SetUpvalue(upvalue_idx));
+                            }
+                            // Иначе это глобальная переменная
+                            else {
                                 let mangled_name = self.mangle_name(&name, ctx);
                                 let name_idx = self.intern_string(&mangled_name, ctx);
                                 ctx.opcodes.push(OpCode::SetGlobal(name_idx));
@@ -148,8 +168,115 @@ impl Generator {
                 ctx.opcodes.push(OpCode::Jump(cond_pos));
                 self.patch_jump(ctx, jmp_false);
             }
+            Statement::FuncDecl(func_decl) => {
+                if func_decl.is_exported && ctx.in_function {
+                    panic!("Нельзя экспортировать функцию внутри другой функции");
+                }
+
+                // Компилируем тело функции
+                let func_value =
+                    self.compile_function(&func_decl.name, &func_decl.params, &func_decl.body, ctx);
+
+                // Получаем количество upvalues из скомпилированной функции
+                let upvalue_count = match &func_value {
+                    Value::Function(f) => f.upvalue_count,
+                    _ => 0,
+                };
+
+                // Добавляем в константы
+                let fn_idx = self.intern_constant(func_value, ctx);
+
+                // Создаём замыкание с правильным количеством upvalues
+                ctx.opcodes.push(OpCode::Closure(fn_idx, upvalue_count));
+
+                if ctx.in_function {
+                    // Вложенная функция - определяем как локальную переменную
+                    let slot = ctx.next_local_slot;
+                    ctx.local_slots.insert(func_decl.name.clone(), slot);
+                    ctx.next_local_slot += 1;
+                    ctx.opcodes.push(OpCode::DefineLocal(slot));
+                } else {
+                    // Глобальная функция
+                    let mangled_name = self.mangle_name(&func_decl.name, ctx);
+                    let name_idx = self.intern_string(&mangled_name, ctx);
+                    ctx.opcodes.push(OpCode::DefineGlobal(name_idx));
+                }
+            }
+            Statement::Return(ret_stmt) => {
+                if !ctx.in_function {
+                    panic!("'возврат' вне функции");
+                }
+
+                if let Some(value) = &ret_stmt.value {
+                    self.emit_expression(value.clone(), ctx);
+                } else {
+                    let nil_idx = self.intern_constant(Value::Nil, ctx);
+                    ctx.opcodes.push(OpCode::Constant(nil_idx));
+                }
+
+                ctx.opcodes.push(OpCode::Return_);
+            }
+            Statement::Import(_) => {} // Импорт выполняет загрузчик модулей
             _ => unimplemented!(),
         }
+    }
+
+    /// Разрешить локальную переменную
+    fn resolve_local(&self, name: &str, ctx: &GenContext) -> Option<usize> {
+        ctx.local_slots.get(name).copied()
+    }
+
+    /// Разрешить upvalue (переменная из внешней области)
+    fn resolve_upvalue(&mut self, name: &str, ctx: &mut GenContext) -> Option<usize> {
+        // Если нет родительского контекста, upvalue не может быть найден
+        let has_parent = ctx.parent_context.is_some();
+        if !has_parent {
+            return None;
+        }
+
+        // Сначала ищем в локальных переменных родителя
+        let parent_local = ctx.parent_context.as_ref()
+            .and_then(|parent| self.resolve_local(name, parent));
+
+        if let Some(local_idx) = parent_local {
+            // Добавляем upvalue для локальной переменной
+            return Some(self.add_upvalue(ctx, name, true, local_idx));
+        }
+
+        // Рекурсивно ищем в upvalues родителя
+        // Для этого нам нужно временно извлечь parent_context
+        let mut parent_ctx = ctx.parent_context.take()?;
+        let parent_upvalue_idx = self.resolve_upvalue(name, &mut parent_ctx);
+
+        // Возвращаем parent_context обратно
+        ctx.parent_context = Some(parent_ctx);
+
+        if let Some(upvalue_idx) = parent_upvalue_idx {
+            // Добавляем upvalue для upvalue родителя
+            return Some(self.add_upvalue(ctx, name, false, upvalue_idx));
+        }
+
+        None
+    }
+
+    /// Добавить upvalue в текущий контекст
+    fn add_upvalue(&mut self, ctx: &mut GenContext, name: &str, is_local: bool, index: usize) -> usize {
+        // Проверяем, не добавлен ли уже этот upvalue
+        for (i, upvalue_info) in ctx.upvalues.iter().enumerate() {
+            if upvalue_info.name == name {
+                return i;
+            }
+        }
+
+        // Добавляем новый upvalue
+        let upvalue_idx = ctx.upvalues.len();
+        ctx.upvalues.push(UpvalueInfo {
+            name: name.to_string(),
+            is_local,
+            index,
+        });
+
+        upvalue_idx
     }
 
     fn emit_expression(&mut self, e: Expression, ctx: &mut GenContext) {
@@ -168,9 +295,16 @@ impl Generator {
             }
             Expression::Identifier(name, _) => {
                 if ctx.in_function {
-                    if let Some(slot) = ctx.local_slots.get(&name) {
-                        ctx.opcodes.push(OpCode::GetLocal(*slot));
-                    } else {
+                    // Сначала проверяем локальные переменные
+                    if let Some(slot) = self.resolve_local(&name, ctx) {
+                        ctx.opcodes.push(OpCode::GetLocal(slot));
+                    }
+                    // Затем проверяем upvalues
+                    else if let Some(upvalue_idx) = self.resolve_upvalue(&name, ctx) {
+                        ctx.opcodes.push(OpCode::GetUpvalue(upvalue_idx));
+                    }
+                    // Иначе это глобальная переменная
+                    else {
                         let mangled_name = self.mangle_name(&name, ctx);
                         let name_idx = self.intern_string(&mangled_name, ctx);
                         ctx.opcodes.push(OpCode::GetGlobal(name_idx));
@@ -212,7 +346,18 @@ impl Generator {
                 };
                 ctx.opcodes.push(op);
             }
-            Expression::Call(call_expr) => todo!(),
+            Expression::Call(call_expr) => {
+                // Генерируем callee
+                self.emit_expression(call_expr.callee, ctx);
+
+                // Генерируем аргументы
+                for arg in &call_expr.arguments {
+                    self.emit_expression(arg.clone(), ctx);
+                }
+
+                // Вызов
+                ctx.opcodes.push(OpCode::Call(call_expr.arguments.len()));
+            }
             Expression::FieldAccess(field_access_expr) => todo!(),
             Expression::ModuleAccess(module_access) => {
                 // Генерируем загрузку символа из модуля с манглингом имен
@@ -220,7 +365,23 @@ impl Generator {
                 let name_idx = self.intern_string(&mangled_name, ctx);
                 ctx.opcodes.push(OpCode::GetGlobal(name_idx));
             }
-            Expression::Lambda(lambda_expr) => todo!(),
+            Expression::Lambda(lambda_expr) => {
+                // Компилируем функцию и собираем upvalues
+                let func_value =
+                    self.compile_function("<lambda>", &lambda_expr.params, &lambda_expr.body, ctx);
+
+                // Получаем количество upvalues из скомпилированной функции
+                let upvalue_count = match &func_value {
+                    Value::Function(f) => f.upvalue_count,
+                    _ => 0,
+                };
+
+                let fn_idx = self.intern_constant(func_value, ctx);
+
+                ctx.opcodes.push(OpCode::Closure(fn_idx, upvalue_count));
+
+                // Лямбда оставляет замыкание на стеке
+            }
             Expression::This(span) => todo!(),
             Expression::Super(_, span) => todo!(),
         }
@@ -300,6 +461,61 @@ impl Generator {
         };
 
         ctx.opcodes[operand_pos] = patched_opcode;
+    }
+
+    fn compile_function(
+        &mut self,
+        name: &str,
+        params: &[Parameter],
+        body: &[Statement],
+        parent_ctx: &mut GenContext,
+    ) -> Value {
+        let mut func_ctx = GenContext {
+            constants: Vec::new(),
+            opcodes: Vec::new(),
+            current_namespace: parent_ctx.current_namespace.clone(),
+            in_function: true,
+            local_slots: HashMap::new(),
+            next_local_slot: 0,
+            parent_context: Some(Box::new(parent_ctx.clone())),
+            upvalues: Vec::new(),
+        };
+
+        // Регистрируем параметры как локальные переменные
+        for param in params {
+            let slot = func_ctx.next_local_slot;
+            func_ctx.local_slots.insert(param.name.clone(), slot);
+            func_ctx.next_local_slot += 1;
+        }
+
+        // Генерируем тело
+        for stmt in body {
+            self.emit_statement(stmt.clone(), &mut func_ctx);
+        }
+
+        // Неявный return nil
+        let nil_idx = self.intern_constant(Value::Nil, &mut func_ctx);
+        func_ctx.opcodes.push(OpCode::Constant(nil_idx));
+        func_ctx.opcodes.push(OpCode::Return_);
+
+        // Собираем информацию об upvalues
+        let upvalue_descriptors: Vec<UpvalueDescriptor> = func_ctx
+            .upvalues
+            .iter()
+            .map(|uv| UpvalueDescriptor {
+                is_local: uv.is_local,
+                index: uv.index,
+            })
+            .collect();
+
+        Value::Function(Rc::new(Function {
+            arity: params.len(),
+            opcodes: func_ctx.opcodes,
+            constants: func_ctx.constants,
+            name: name.to_string(),
+            upvalue_count: upvalue_descriptors.len(),
+            upvalue_descriptors,
+        }))
     }
 }
 

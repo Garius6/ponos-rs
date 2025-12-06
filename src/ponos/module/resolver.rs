@@ -4,6 +4,7 @@ use crate::ponos::ast::{Program, Statement};
 use crate::ponos::parser::PonosParser;
 use crate::ponos::symbol_table::{SymbolTable, ScopeId, Symbol, SymbolKind};
 use crate::ponos::span::Span;
+use crate::ponos::native::NativeModuleRegistry;
 use super::loader::ModuleLoader;
 
 /// Загруженный модуль с метаданными
@@ -29,6 +30,8 @@ pub struct ModuleResolver {
     parser: PonosParser,
     /// Кэш загруженных модулей (путь файла -> LoadedModule)
     loaded_modules: HashMap<PathBuf, LoadedModule>,
+    /// Реестр нативных модулей
+    native_registry: NativeModuleRegistry,
 }
 
 impl ModuleResolver {
@@ -38,6 +41,7 @@ impl ModuleResolver {
             loader: ModuleLoader::new(),
             parser: PonosParser::new(),
             loaded_modules: HashMap::new(),
+            native_registry: NativeModuleRegistry::new(),
         }
     }
 
@@ -47,7 +51,13 @@ impl ModuleResolver {
             loader: ModuleLoader::with_stdlib(stdlib_path),
             parser: PonosParser::new(),
             loaded_modules: HashMap::new(),
+            native_registry: NativeModuleRegistry::new(),
         }
+    }
+
+    /// Получить ссылку на реестр нативных модулей
+    pub fn native_registry(&self) -> &NativeModuleRegistry {
+        &self.native_registry
     }
 
     /// Загрузить модуль по пути импорта
@@ -67,10 +77,15 @@ impl ModuleResolver {
         from_file: Option<&Path>,
         symbol_table: &mut SymbolTable,
     ) -> Result<LoadedModule, String> {
-        // 1. Разрешаем путь к файлу модуля
+        // 1. Проверяем, является ли это нативным модулем
+        if self.native_registry.is_native_module(import_path) {
+            return self.load_native_module(import_path, alias, symbol_table);
+        }
+
+        // 2. Разрешаем путь к файлу модуля
         let module_path = self.loader.resolve_path(import_path, from_file)?;
 
-        // 2. Проверяем кэш
+        // 3. Проверяем кэш
         if let Some(cached) = self.loaded_modules.get(&module_path) {
             // Если есть псевдоним, создаем новый LoadedModule с обновленным namespace
             if let Some(alias_name) = alias {
@@ -85,30 +100,30 @@ impl ModuleResolver {
             return Ok(cached.clone());
         }
 
-        // 3. Начинаем загрузку (проверка циклических зависимостей)
+        // 4. Начинаем загрузку (проверка циклических зависимостей)
         self.loader.begin_loading(&module_path)?;
 
-        // 4. Читаем содержимое файла
+        // 5. Читаем содержимое файла
         let source = self.loader.read_module_file(&module_path)?;
 
-        // 5. Парсим модуль
+        // 6. Парсим модуль
         let ast = self.parser
             .parse(source)
             .map_err(|e| format!("Ошибка парсинга модуля {}: {:?}", module_path.display(), e))?;
 
-        // 6. Извлекаем список экспортов
+        // 7. Извлекаем список экспортов
         let exports = Self::collect_exports(&ast);
 
-        // 7. Определяем имя пространства имен
+        // 8. Определяем имя пространства имен
         let namespace = Self::extract_namespace(import_path, alias.clone());
 
-        // 8. Создаем scope для модуля в SymbolTable
+        // 9. Создаем scope для модуля в SymbolTable
         let scope_id = symbol_table.push_scope();
 
-        // 9. Регистрируем экспортированные символы в SymbolTable
+        // 10. Регистрируем экспортированные символы в SymbolTable
         Self::register_exports_in_symbol_table(&ast, scope_id, symbol_table)?;
 
-        // 10. Создаем LoadedModule
+        // 11. Создаем LoadedModule
         let loaded_module = LoadedModule {
             namespace,
             ast,
@@ -117,11 +132,60 @@ impl ModuleResolver {
             scope_id,
         };
 
-        // 11. Завершаем загрузку
+        // 12. Завершаем загрузку
         self.loader.end_loading(&module_path);
 
-        // 12. Кэшируем
+        // 13. Кэшируем
         self.loaded_modules.insert(module_path, loaded_module.clone());
+
+        Ok(loaded_module)
+    }
+
+    /// Загрузить нативный модуль
+    fn load_native_module(
+        &mut self,
+        import_path: &str,
+        alias: Option<String>,
+        symbol_table: &mut SymbolTable,
+    ) -> Result<LoadedModule, String> {
+        let native_module = self.native_registry.get_module(import_path)
+            .ok_or_else(|| format!("Нативный модуль '{}' не найден", import_path))?;
+
+        // Определяем имя пространства имен
+        let namespace = Self::extract_namespace(import_path, alias.clone());
+
+        // Создаем пустой AST (нативные модули не имеют AST)
+        let ast = Program {
+            statements: Vec::new(),
+        };
+
+        // Копируем список экспортов
+        let exports = native_module.exports.clone();
+
+        // Создаем scope для модуля в SymbolTable
+        let scope_id = symbol_table.push_scope();
+
+        // Регистрируем экспортированные символы как функции
+        for export_name in &exports {
+            let symbol = Symbol::new(
+                export_name.clone(),
+                SymbolKind::Function,
+                true,
+                Span::default(),
+            );
+            symbol_table
+                .define_in_scope(scope_id, symbol)
+                .map_err(|e| format!("Ошибка регистрации нативной функции '{}': {}", export_name, e))?;
+        }
+
+        // Создаем LoadedModule с фиктивным путём
+        let loaded_module = LoadedModule {
+            namespace,
+            ast,
+            exports,
+            file_path: PathBuf::from(format!("<native:{}>", import_path)),
+            scope_id,
+        };
 
         Ok(loaded_module)
     }

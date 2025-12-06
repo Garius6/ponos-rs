@@ -1,9 +1,47 @@
+use std::{cell::RefCell, rc::Rc};
+
+use crate::ponos::opcode::OpCode;
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
     Number(f64),
     String(String),
     Boolean(bool),
     Nil,
+    Function(Rc<Function>),
+    NativeFunction(NativeFnId),
+    Closure(Rc<Closure>),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct NativeFnId(pub usize);
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Function {
+    pub arity: usize,
+    pub opcodes: Vec<OpCode>,
+    pub constants: Vec<Value>,
+    pub name: String,
+    pub upvalue_count: usize,
+    pub upvalue_descriptors: Vec<UpvalueDescriptor>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct UpvalueDescriptor {
+    pub is_local: bool, // true если захватывается локальная переменная, false если upvalue родителя
+    pub index: usize,   // Индекс локальной переменной или upvalue
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Closure {
+    pub function: Function,
+    pub upvalues: Vec<Rc<RefCell<Upvalue>>>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Upvalue {
+    Open(usize),   // Индекс на стеке
+    Closed(Value), // Закрытое значение
 }
 
 pub fn is_equal(a: &Value, b: &Value) -> bool {
