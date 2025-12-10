@@ -200,6 +200,10 @@ pub enum Expression {
     // Замыкание/лямбда
     Lambda(Box<LambdaExpr>),
 
+    // Индексирование и срезы
+    Index(Box<IndexExpr>),
+    Range(Box<RangeExpr>),
+
     // Специальные
     This(Span),
     Super(String, Span), // Super(method_name, span)
@@ -218,6 +222,8 @@ impl Expression {
             Expression::FieldAccess(e) => e.span,
             Expression::ModuleAccess(e) => e.span,
             Expression::Lambda(e) => e.span,
+            Expression::Index(e) => e.span,
+            Expression::Range(e) => e.span,
             Expression::This(s) => *s,
             Expression::Super(_, s) => *s,
         }
@@ -239,6 +245,7 @@ pub enum BinaryOperator {
     Subtract, // -
     Multiply, // *
     Divide,   // /
+    Modulo,   // %
 
     // Сравнения
     Equal,        // ==
@@ -265,7 +272,7 @@ impl BinaryOperator {
             | BinaryOperator::Greater
             | BinaryOperator::GreaterEqual => 4,
             BinaryOperator::Add | BinaryOperator::Subtract => 5,
-            BinaryOperator::Multiply | BinaryOperator::Divide => 6,
+            BinaryOperator::Multiply | BinaryOperator::Divide | BinaryOperator::Modulo => 6,
         }
     }
 
@@ -313,5 +320,19 @@ pub struct ModuleAccessExpr {
 pub struct LambdaExpr {
     pub params: Vec<Parameter>,
     pub body: Vec<Statement>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct IndexExpr {
+    pub object: Expression,   // строка, массив, или словарь
+    pub index: Expression,    // индекс (число или строка для словарей)
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct RangeExpr {
+    pub start: Option<Box<Expression>>,  // начало (None для [:5])
+    pub end: Option<Box<Expression>>,    // конец (None для [5:])
     pub span: Span,
 }

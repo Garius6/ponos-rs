@@ -2,7 +2,7 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use crate::ponos::{
     opcode::OpCode,
-    value::{self, Closure, Function, NativeFnId, Upvalue, Value},
+    value::{self, BoundMethod, Class, Closure, Function, Instance, NativeFnId, Upvalue, Value},
 };
 
 #[derive(Debug)]
@@ -50,6 +50,13 @@ impl<'a> VM {
             if self.frames[frame_idx].ip >= self.frames[frame_idx].opcodes.len() {
                 // Автоматический return
                 if self.frames.len() == 1 {
+                    // Для main frame очистить локальные переменные, оставив только результат
+                    let base = self.frames[0].base;
+                    if self.stack.len() > base {
+                        let result = self.stack.pop().unwrap();
+                        self.stack.truncate(base);
+                        self.stack.push(result);
+                    }
                     break;
                 }
                 self.stack.push(Value::Nil);
@@ -66,6 +73,13 @@ impl<'a> VM {
                     self.stack
                         .push(self.frames[frame_idx].constants[idx].clone());
                 }
+                OpCode::Pop => {
+                    self.stack.pop().expect("Стек пуст при Pop");
+                }
+                OpCode::Dup => {
+                    let value = self.stack.last().expect("Стек пуст при Dup").clone();
+                    self.stack.push(value);
+                }
                 OpCode::Negate => {
                     let a = match self.stack.pop().unwrap() {
                         Value::Number(n) => n,
@@ -74,10 +88,11 @@ impl<'a> VM {
 
                     self.stack.push(Value::Number(-a));
                 }
-                OpCode::Add => self.binary_number_op(|a, b| a + b),
+                OpCode::Add => self.binary_add_op(),
                 OpCode::Sub => self.binary_number_op(|a, b| a - b),
                 OpCode::Mul => self.binary_number_op(|a, b| a * b),
                 OpCode::Div => self.binary_number_op(|a, b| a / b),
+                OpCode::Mod => self.binary_number_op(|a, b| a % b),
                 OpCode::True_ => self.stack.push(Value::Boolean(true)),
                 OpCode::False_ => self.stack.push(Value::Boolean(false)),
                 OpCode::Eql => self.binary_logical_op(|a, b| value::is_equal(&a, &b)),
@@ -141,6 +156,14 @@ impl<'a> VM {
                             upvalues.push(upvalue);
                         } else {
                             // Захватываем upvalue из родительского замыкания
+                            if descriptor.index >= self.frames[frame_idx].upvalues.len() {
+                                panic!(
+                                    "Попытка захватить upvalue[{}], но у текущего фрейма только {} upvalues. \
+                                    Возможно, замыкание создано внутри обычной функции, а не замыкания.",
+                                    descriptor.index,
+                                    self.frames[frame_idx].upvalues.len()
+                                );
+                            }
                             let parent_upvalue =
                                 self.frames[frame_idx].upvalues[descriptor.index].clone();
                             upvalues.push(parent_upvalue);
@@ -216,7 +239,34 @@ impl<'a> VM {
                     let callee = self.stack[callee_idx].clone();
 
                     match callee {
-                        Value::Function(func) => self.call_function(func, arg_count).unwrap(),
+                        Value::Class(class) => {
+                            // Создание экземпляра класса
+                            let instance = Instance {
+                                class: class.clone(),
+                                fields: HashMap::new(),
+                            };
+                            let instance_rc = Rc::new(RefCell::new(instance));
+
+                            // Заменяем класс на экземпляр на стеке
+                            self.stack[callee_idx] = Value::Instance(instance_rc.clone());
+
+                            // Вызываем конструктор если есть
+                            if let Some(ctor) = class.methods.get("конструктор") {
+                                self.call_function(ctor.clone(), arg_count, true).unwrap();
+                            } else {
+                                // Нет конструктора - просто удаляем аргументы
+                                self.stack.drain(callee_idx + 1..);
+                            }
+                        }
+                        Value::BoundMethod(bound) => {
+                            // Заменяем BoundMethod на экземпляр (это будет slot 0)
+                            self.stack[callee_idx] = Value::Instance(bound.receiver.clone());
+                            self.call_function(bound.method.clone(), arg_count, true)
+                                .unwrap();
+                        }
+                        Value::Function(func) => {
+                            self.call_function(func, arg_count, false).unwrap()
+                        }
                         Value::Closure(closure) => self.call_closure(closure, arg_count).unwrap(),
                         Value::NativeFunction(id) => self.call_native(id, arg_count).unwrap(),
                         _ => panic!("Попытка вызвать не-функцию"),
@@ -232,16 +282,218 @@ impl<'a> VM {
                     self.stack.push(return_value);
                     continue;
                 }
-                OpCode::Pop => todo!(),
-                OpCode::Push => todo!(),
-                OpCode::Class => todo!(),
-                OpCode::Instance => todo!(),
-                OpCode::GetProperty => todo!(),
-                OpCode::SetProperty => todo!(),
-                OpCode::Invoke => todo!(),
-                OpCode::GetSuper => todo!(),
+                OpCode::Class => {
+                    // Следующий опкод: Constant с именем класса
+                    self.frames[frame_idx].ip += 1;
+                    let name_opcode = self.frames[frame_idx].opcodes[self.frames[frame_idx].ip];
+                    let name = match name_opcode {
+                        OpCode::Constant(idx) => match &self.frames[frame_idx].constants[idx] {
+                            Value::String(s) => s.clone(),
+                            _ => panic!("Имя класса должно быть строкой"),
+                        },
+                        _ => panic!("Ожидался Constant после Class"),
+                    };
+
+                    let class = Class {
+                        name,
+                        methods: HashMap::new(),
+                        fields: Vec::new(),
+                        parent: None,
+                    };
+
+                    self.stack.push(Value::Class(Rc::new(class)));
+                }
+                OpCode::Inherit => {
+                    // Стек: [subclass, superclass]
+                    let superclass_value = self.stack.pop().unwrap();
+                    let superclass = match superclass_value {
+                        Value::Class(c) => c,
+                        _ => panic!("Inherit: суперкласс должен быть классом"),
+                    };
+
+                    // Получаем подкласс (остается на стеке)
+                    let subclass_value = self.stack.last_mut().unwrap();
+                    match subclass_value {
+                        Value::Class(subclass_rc) => {
+                            let subclass_mut = Rc::make_mut(subclass_rc);
+                            subclass_mut.parent = Some(superclass);
+                        }
+                        _ => panic!("Inherit: подкласс должен быть классом"),
+                    }
+                }
+                OpCode::DefineMethod(name_idx) => {
+                    let method_name =
+                        self.expect_string(&self.frames[frame_idx].constants, name_idx);
+                    let method = self.stack.pop().unwrap();
+
+                    let class_value = self.stack.last_mut().unwrap();
+                    match class_value {
+                        Value::Class(class_rc) => {
+                            let class_mut = Rc::make_mut(class_rc);
+
+                            let func = match method {
+                                Value::Function(f) => f,
+                                Value::Closure(c) => Rc::new(c.function.clone()),
+                                _ => panic!("Метод должен быть функцией или замыканием"),
+                            };
+
+                            class_mut.methods.insert(method_name, func);
+                        }
+                        _ => panic!("DefineMethod: не класс на вершине стека"),
+                    }
+                }
+                OpCode::GetProperty => {
+                    // Следующий опкод: Constant с индексом имени свойства
+                    self.frames[frame_idx].ip += 1;
+                    let name_opcode = self.frames[frame_idx].opcodes[self.frames[frame_idx].ip];
+                    let property_name = match name_opcode {
+                        OpCode::Constant(idx) => match &self.frames[frame_idx].constants[idx] {
+                            Value::String(s) => s.clone(),
+                            _ => panic!("Имя свойства должно быть строкой"),
+                        },
+                        _ => panic!("Ожидался Constant после GetProperty"),
+                    };
+
+                    let instance_value = self.stack.pop().unwrap();
+                    match instance_value {
+                        Value::Instance(instance_rc) => {
+                            // Сначала ищем в полях
+                            let field_value =
+                                instance_rc.borrow().fields.get(&property_name).cloned();
+
+                            if let Some(value) = field_value {
+                                self.stack.push(value);
+                            }
+                            // Потом в методах (включая родительские классы) → BoundMethod
+                            else {
+                                let method = instance_rc.borrow().class.find_method(&property_name);
+
+                                if let Some(method) = method {
+                                    let bound = BoundMethod {
+                                        receiver: instance_rc.clone(),
+                                        method,
+                                    };
+                                    self.stack.push(Value::BoundMethod(Rc::new(bound)));
+                                } else {
+                                    panic!("Свойство '{}' не найдено", property_name);
+                                }
+                            }
+                        }
+                        _ => panic!("GetProperty: не экземпляр, получен {:?}", instance_value),
+                    }
+                }
+                OpCode::SetProperty => {
+                    // Следующий опкод: Constant с индексом имени свойства
+                    self.frames[frame_idx].ip += 1;
+                    let name_opcode = self.frames[frame_idx].opcodes[self.frames[frame_idx].ip];
+                    let property_name = match name_opcode {
+                        OpCode::Constant(idx) => match &self.frames[frame_idx].constants[idx] {
+                            Value::String(s) => s.clone(),
+                            _ => panic!("Имя свойства должно быть строкой"),
+                        },
+                        _ => panic!("Ожидался Constant после SetProperty"),
+                    };
+
+                    let instance_value = self.stack.pop().unwrap();
+                    let value = self.stack.pop().unwrap();
+
+                    match instance_value {
+                        Value::Instance(instance_rc) => {
+                            instance_rc
+                                .borrow_mut()
+                                .fields
+                                .insert(property_name, value.clone());
+                            self.stack.push(value);
+                        }
+                        _ => panic!("SetProperty: не экземпляр"),
+                    }
+                }
+                OpCode::GetSuper => {
+                    // Следующий опкод: Constant с именем метода
+                    self.frames[frame_idx].ip += 1;
+                    let name_opcode = self.frames[frame_idx].opcodes[self.frames[frame_idx].ip];
+                    let method_name = match name_opcode {
+                        OpCode::Constant(idx) => match &self.frames[frame_idx].constants[idx] {
+                            Value::String(s) => s.clone(),
+                            _ => panic!("Имя метода должно быть строкой"),
+                        },
+                        _ => panic!("Ожидался Constant после GetSuper"),
+                    };
+
+                    // Получаем экземпляр со стека
+                    let instance_value = self.stack.pop().unwrap();
+                    match instance_value {
+                        Value::Instance(instance_rc) => {
+                            // Получаем родительский класс
+                            let parent_class = instance_rc
+                                .borrow()
+                                .class
+                                .parent
+                                .as_ref()
+                                .expect("super вызван в классе без родителя")
+                                .clone();
+
+                            // Ищем метод в родительском классе
+                            let method = parent_class.find_method(&method_name).expect(&format!(
+                                "Метод '{}' не найден в родительском классе",
+                                method_name
+                            ));
+
+                            // Создаём BoundMethod
+                            let bound = BoundMethod {
+                                receiver: instance_rc.clone(),
+                                method,
+                            };
+
+                            self.stack.push(Value::BoundMethod(Rc::new(bound)));
+                        }
+                        _ => panic!("GetSuper: ожидался экземпляр класса"),
+                    }
+                }
+                OpCode::GetIndex => {
+                    let index = self.stack.pop().unwrap();
+                    let object = self.stack.pop().unwrap();
+
+                    match (&object, &index) {
+                        // Индексирование строки
+                        (Value::String(s), Value::Number(n)) => {
+                            let idx = *n as usize;
+                            if idx >= s.chars().count() {
+                                panic!(
+                                    "Индекс {} вне диапазона для строки длиной {}",
+                                    idx,
+                                    s.chars().count()
+                                );
+                            }
+                            let ch = s.chars().nth(idx).unwrap();
+                            self.stack.push(Value::String(ch.to_string()));
+                        }
+                        // Срез строки
+                        (Value::String(s), Value::Range(start, end)) => {
+                            let char_count = s.chars().count();
+                            let start_idx = start.unwrap_or(0.0) as usize;
+                            let end_idx = end.unwrap_or(char_count as f64) as usize;
+
+                            if start_idx > char_count || end_idx > char_count || start_idx > end_idx
+                            {
+                                panic!(
+                                    "Некорректные границы среза: [{}:{}] для строки длиной {}",
+                                    start_idx, end_idx, char_count
+                                );
+                            }
+
+                            let slice: String = s
+                                .chars()
+                                .skip(start_idx)
+                                .take(end_idx - start_idx)
+                                .collect();
+                            self.stack.push(Value::String(slice));
+                        }
+                        _ => panic!("Индексирование не поддерживается для данных типов"),
+                    }
+                }
                 OpCode::DefineGlobal(name_idx) => {
-                    let name = self.expect_string(constants, name_idx);
+                    let name = self.expect_string(&self.frames[frame_idx].constants, name_idx);
                     let value = self
                         .stack
                         .pop()
@@ -254,7 +506,7 @@ impl<'a> VM {
                     self.globals.insert(name, value);
                 }
                 OpCode::SetGlobal(name_idx) => {
-                    let name = self.expect_string(constants, name_idx);
+                    let name = self.expect_string(&self.frames[frame_idx].constants, name_idx);
                     let value = self
                         .stack
                         .pop()
@@ -268,7 +520,7 @@ impl<'a> VM {
                     *slot = value;
                 }
                 OpCode::GetGlobal(name_idx) => {
-                    let name = self.expect_string(constants, name_idx);
+                    let name = self.expect_string(&self.frames[frame_idx].constants, name_idx);
                     let value = self
                         .globals
                         .get(&name)
@@ -313,6 +565,30 @@ impl<'a> VM {
         self.stack.push(Value::Number(f(a, b)));
     }
 
+    fn binary_add_op(&mut self) {
+        let right = self.stack.pop().unwrap();
+        let left = self.stack.pop().unwrap();
+
+        match (&left, &right) {
+            // Конкатенация строк
+            (Value::String(s1), Value::String(s2)) => {
+                self.stack.push(Value::String(format!("{}{}", s1, s2)));
+            }
+            // Арифметика чисел
+            (Value::Number(n1), Value::Number(n2)) => {
+                self.stack.push(Value::Number(n1 + n2));
+            }
+            // Преобразование число + строка
+            (Value::Number(n), Value::String(s)) => {
+                self.stack.push(Value::String(format!("{}{}", n, s)));
+            }
+            (Value::String(s), Value::Number(n)) => {
+                self.stack.push(Value::String(format!("{}{}", s, n)));
+            }
+            _ => panic!("Оператор + поддерживает только числа и строки"),
+        }
+    }
+
     fn expect_string(&self, constants: &[Value], idx: usize) -> String {
         match &constants[idx] {
             Value::String(s) => s.clone(),
@@ -320,7 +596,12 @@ impl<'a> VM {
         }
     }
 
-    fn call_function(&mut self, func: Rc<Function>, arg_count: usize) -> Result<(), String> {
+    fn call_function(
+        &mut self,
+        func: Rc<Function>,
+        arg_count: usize,
+        is_method: bool,
+    ) -> Result<(), String> {
         if arg_count != func.arity {
             return Err(format!(
                 "Ожидается {} аргументов, передано {}",
@@ -329,13 +610,20 @@ impl<'a> VM {
         }
 
         let base = self.stack.len() - arg_count;
-        self.stack.remove(base - 1); // Удалить callee
+
+        // Для методов и конструкторов не удаляем callee - он станет 'это' (слот 0)
+        let final_base = if !is_method {
+            self.stack.remove(base - 1); // Удалить callee
+            base - 1 // После удаления callee, base сдвигается
+        } else {
+            base - 1
+        };
 
         self.frames.push(CallFrame {
             opcodes: func.opcodes.clone(),
             constants: func.constants.clone(),
             ip: 0,
-            base,
+            base: final_base,
             upvalues: Vec::new(),
         });
 
@@ -351,13 +639,15 @@ impl<'a> VM {
         }
 
         let base = self.stack.len() - arg_count;
-        self.stack.remove(base - 1);
+        self.stack.remove(base - 1); // Удалить callee
+        // После удаления callee, base сдвигается на 1
+        let final_base = base - 1;
 
         self.frames.push(CallFrame {
             opcodes: closure.function.opcodes.clone(),
             constants: closure.function.constants.clone(),
             ip: 0,
-            base,
+            base: final_base,
             upvalues: closure.upvalues.clone(),
         });
 

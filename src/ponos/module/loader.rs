@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::fs;
 use std::collections::HashSet;
+use crate::ponos::stdlib;
 
 /// Загрузчик модулей
 /// Отвечает за разрешение путей модулей и предотвращение циклических зависимостей
@@ -47,10 +48,24 @@ impl ModuleLoader {
     /// Разрешить путь к модулю
     ///
     /// Поддерживает:
+    /// - Встроенные stdlib модули (приоритет 1)
     /// - Относительные пути: `./модуль`, `../модуль`
     /// - Абсолютные пути: `/путь/к/модулю`
     /// - Stdlib пути: `стандарт/мат` (если stdlib_path установлен)
     pub fn resolve_path(&self, module_path: &str, from_file: Option<&Path>) -> Result<PathBuf, String> {
+        // Нормализуем путь (удаляем .pns если есть)
+        let normalized = if module_path.ends_with(".pns") {
+            &module_path[..module_path.len() - 4]
+        } else {
+            module_path
+        };
+
+        // 0. НОВОЕ: Проверяем встроенные stdlib модули (высший приоритет)
+        if stdlib::is_embedded_stdlib(normalized) {
+            // Возвращаем виртуальный путь для embedded модулей
+            return Ok(PathBuf::from(format!("{}.pns", normalized)));
+        }
+
         // 1. Проверяем абсолютный путь
         if module_path.starts_with('/') {
             return self.resolve_absolute_path(module_path);
@@ -156,8 +171,21 @@ impl ModuleLoader {
 
     /// Начать загрузку модуля (добавить в стек)
     pub fn begin_loading(&mut self, path: &Path) -> Result<(), String> {
-        let canonical_path = path.canonicalize()
-            .map_err(|e| format!("Не удалось канонизировать путь {}: {}", path.display(), e))?;
+        // Для embedded модулей используем путь как есть, для остальных - канонизируем
+        let canonical_path = if let Some(module_path) = Self::extract_stdlib_module_path(path) {
+            if stdlib::is_embedded_stdlib(&module_path) {
+                // Embedded модуль - используем путь как есть
+                path.to_path_buf()
+            } else {
+                // Обычный модуль - канонизируем
+                path.canonicalize()
+                    .map_err(|e| format!("Не удалось канонизировать путь {}: {}", path.display(), e))?
+            }
+        } else {
+            // Обычный модуль - канонизируем
+            path.canonicalize()
+                .map_err(|e| format!("Не удалось канонизировать путь {}: {}", path.display(), e))?
+        };
 
         // Проверяем циклическую зависимость
         if self.loading_stack.contains(&canonical_path) {
@@ -171,30 +199,53 @@ impl ModuleLoader {
 
     /// Завершить загрузку модуля (удалить из стека)
     pub fn end_loading(&mut self, path: &Path) {
-        if let Ok(canonical_path) = path.canonicalize() {
-            if let Some(pos) = self.loading_stack.iter().position(|p| p == &canonical_path) {
-                self.loading_stack.remove(pos);
+        // Для embedded модулей используем путь как есть
+        let path_to_use = if let Some(module_path) = Self::extract_stdlib_module_path(path) {
+            if stdlib::is_embedded_stdlib(&module_path) {
+                path.to_path_buf()
+            } else {
+                path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
             }
-            self.resolved_cache.insert(canonical_path);
+        } else {
+            path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+        };
+
+        if let Some(pos) = self.loading_stack.iter().position(|p| p == &path_to_use) {
+            self.loading_stack.remove(pos);
         }
+        self.resolved_cache.insert(path_to_use);
     }
 
     /// Проверить, загружается ли модуль в данный момент
     pub fn is_loading(&self, path: &Path) -> bool {
-        if let Ok(canonical_path) = path.canonicalize() {
-            self.loading_stack.contains(&canonical_path)
+        // Для embedded модулей используем путь как есть
+        let path_to_use = if let Some(module_path) = Self::extract_stdlib_module_path(path) {
+            if stdlib::is_embedded_stdlib(&module_path) {
+                path.to_path_buf()
+            } else {
+                path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+            }
         } else {
-            false
-        }
+            path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+        };
+
+        self.loading_stack.contains(&path_to_use)
     }
 
     /// Проверить, был ли модуль уже загружен
     pub fn is_loaded(&self, path: &Path) -> bool {
-        if let Ok(canonical_path) = path.canonicalize() {
-            self.resolved_cache.contains(&canonical_path)
+        // Для embedded модулей используем путь как есть
+        let path_to_use = if let Some(module_path) = Self::extract_stdlib_module_path(path) {
+            if stdlib::is_embedded_stdlib(&module_path) {
+                path.to_path_buf()
+            } else {
+                path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+            }
         } else {
-            false
-        }
+            path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+        };
+
+        self.resolved_cache.contains(&path_to_use)
     }
 
     /// Форматировать цикл зависимостей для вывода ошибки
@@ -209,8 +260,33 @@ impl ModuleLoader {
 
     /// Прочитать содержимое файла модуля
     pub fn read_module_file(&self, path: &Path) -> Result<String, String> {
+        // Попытаться извлечь путь модуля из полного пути
+        if let Some(module_path) = Self::extract_stdlib_module_path(path) {
+            // Проверить встроенные модули
+            if let Some(source) = stdlib::get_embedded_source(&module_path) {
+                return Ok(source.to_string());
+            }
+        }
+
+        // Иначе читать из файловой системы
         fs::read_to_string(path)
             .map_err(|e| format!("Не удалось прочитать файл {}: {}", path.display(), e))
+    }
+
+    /// Извлекает путь модуля из полного пути файла
+    /// Например: "/some/path/стд/математика.pns" -> "стд/математика"
+    fn extract_stdlib_module_path(full_path: &Path) -> Option<String> {
+        let path_str = full_path.to_str()?;
+
+        // Ищем "стд/" в пути
+        if let Some(idx) = path_str.find("стд/") {
+            let module_path = &path_str[idx..];
+            // Убираем расширение .pns
+            if let Some(without_ext) = module_path.strip_suffix(".pns") {
+                return Some(without_ext.to_string());
+            }
+        }
+        None
     }
 }
 

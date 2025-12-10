@@ -6,6 +6,7 @@ mod native;
 mod opcode;
 mod parser;
 mod span;
+pub mod stdlib;
 mod symbol_table;
 mod value;
 mod vm;

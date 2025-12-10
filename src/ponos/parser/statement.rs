@@ -119,6 +119,16 @@ pub fn parse_function_declaration<'a>(input: &mut Input<'a>) -> PResult<'a, Stat
 
     skip_ws_and_comments(input)?;
 
+    // Опциональный тип возврата: ": тип"
+    let _return_type = if char_(':').parse_next(input).is_ok() {
+        skip_ws_and_comments(input)?;
+        Some(parse_identifier(input)?.to_string())
+    } else {
+        None
+    };
+
+    skip_ws_and_comments(input)?;
+
     // Тело функции
     let mut body = Vec::new();
     loop {

@@ -1,6 +1,8 @@
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum OpCode {
     Constant(usize),
+    Pop, // Удалить значение с вершины стека
+    Dup, // Дублировать значение на вершине стека
 
     // Математика
     Negate,
@@ -8,6 +10,7 @@ pub enum OpCode {
     Sub,
     Mul,
     Div,
+    Mod,
 
     // логические операторы
     True_,
@@ -37,17 +40,16 @@ pub enum OpCode {
     Call(usize),
     Return_,
 
-    // работа со стеком
-    Pop,
-    Push,
-
     // ООП
     Class,
-    Instance,    // Создать экземпляр класса
+    Inherit,             // Установить родительский класс (pop superclass, pop subclass, push subclass)
+    DefineMethod(usize), // Добавить метод в класс (имя в константах)
     GetProperty, // Получить свойство экземпляра
     SetProperty, // Установить свойство экземпляра
-    Invoke,      // Вызвать метод на экземпляре
     GetSuper,    // Получить метод родительского класса
+
+    // Индексирование и коллекции
+    GetIndex, // Получить элемент по индексу (2 значения на стеке: объект, индекс)
 
     // переменные
     DefineGlobal(usize),

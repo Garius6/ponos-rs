@@ -4,6 +4,7 @@ use winnow::combinator::{alt, separated, delimited};
 use crate::ponos::ast::*;
 use crate::ponos::span::Span;
 use crate::ponos::parser::combinator::{Input, PResult, char_};
+use crate::ponos::parser::error::{PonosParseError, ParseErrorKind};
 use crate::ponos::parser::lexer::{
     parse_number, parse_string, parse_bool, parse_identifier,
     keyword_this, keyword_super, keyword_func, keyword_end,
@@ -23,6 +24,9 @@ fn parse_binary_expression<'a>(input: &mut Input<'a>, min_precedence: u8) -> PRe
     loop {
         skip_ws_and_comments(input)?;
 
+        // Сохраняем checkpoint для возможности отката
+        let checkpoint = input.checkpoint();
+
         // Пытаемся спарсить бинарный оператор
         let op_result = parse_binary_operator(input);
         if op_result.is_err() {
@@ -33,8 +37,8 @@ fn parse_binary_expression<'a>(input: &mut Input<'a>, min_precedence: u8) -> PRe
         let precedence = operator.precedence();
 
         if precedence < min_precedence {
-            // Возвращаем оператор обратно (не можем сделать в winnow, так что прерываем)
-            // TODO: это упрощенная версия, нужно правильно обрабатывать backtrack
+            // Откатываемся, так как приоритет слишком низкий
+            input.reset(&checkpoint);
             break;
         }
 
@@ -87,6 +91,7 @@ fn parse_binary_operator<'a>(input: &mut Input<'a>) -> PResult<'a, (BinaryOperat
         "-".map(|_| BinaryOperator::Subtract),
         "*".map(|_| BinaryOperator::Multiply),
         "/".map(|_| BinaryOperator::Divide),
+        "%".map(|_| BinaryOperator::Modulo),
     )).parse_next(input)?;
 
     let end = input.len();
@@ -186,6 +191,73 @@ fn parse_postfix_expression<'a>(input: &mut Input<'a>) -> PResult<'a, Expression
                 field,
                 span,
             }));
+            continue;
+        }
+
+        input.reset(&saved);
+
+        // Индексирование: expr[index] или срез: expr[start:end]
+        if char_('[').parse_next(input).is_ok() {
+            skip_ws_and_comments(input)?;
+
+            // Проверяем, не срез ли это (начинается с :)
+            let checkpoint = input.checkpoint();
+            let first_expr = if char_(':').parse_next(input).is_ok() {
+                // Это [:end] - срез без начала
+                None
+            } else {
+                input.reset(&checkpoint);
+                Some(Box::new(parse_expression(input)?))
+            };
+
+            skip_ws_and_comments(input)?;
+
+            // Проверяем наличие :
+            let is_slice = char_(':').parse_next(input).is_ok();
+
+            if is_slice {
+                // Это срез [start:end]
+                skip_ws_and_comments(input)?;
+
+                // Проверяем, есть ли второе выражение
+                let checkpoint2 = input.checkpoint();
+                let second_expr = if char_(']').parse_next(input).is_ok() {
+                    // Это [start:] - срез без конца
+                    None
+                } else {
+                    input.reset(&checkpoint2);
+                    let expr = parse_expression(input)?;
+                    skip_ws_and_comments(input)?;
+                    char_(']').parse_next(input)?;
+                    Some(Box::new(expr))
+                };
+
+                // Создаем Range выражение
+                let range_span = Span::new(0, 0);  // TODO: правильный span
+                let range = Expression::Range(Box::new(crate::ponos::ast::RangeExpr {
+                    start: first_expr,
+                    end: second_expr,
+                    span: range_span,
+                }));
+
+                let span = Span::new(expr.span().start, input.len());
+                expr = Expression::Index(Box::new(crate::ponos::ast::IndexExpr {
+                    object: expr,
+                    index: range,
+                    span,
+                }));
+            } else {
+                // Обычное индексирование [index]
+                skip_ws_and_comments(input)?;
+                char_(']').parse_next(input)?;
+
+                let span = Span::new(expr.span().start, input.len());
+                expr = Expression::Index(Box::new(crate::ponos::ast::IndexExpr {
+                    object: expr,
+                    index: *first_expr.unwrap(),
+                    span,
+                }));
+            }
             continue;
         }
 
@@ -298,6 +370,16 @@ fn parse_lambda_expr<'a>(input: &mut Input<'a>) -> PResult<'a, Expression> {
         char_(')').parse_next(input)?;
 
         params
+    };
+
+    skip_ws_and_comments(input)?;
+
+    // Опциональный тип возврата: ": тип"
+    let _return_type = if char_(':').parse_next(input).is_ok() {
+        skip_ws_and_comments(input)?;
+        Some(parse_identifier(input)?.to_string())
+    } else {
+        None
     };
 
     skip_ws_and_comments(input)?;
@@ -541,6 +623,23 @@ mod tests {
                 assert_eq!(l.params[0].type_annotation, Some("число".to_string()));
                 assert_eq!(l.params[1].name, "y");
                 assert_eq!(l.params[1].type_annotation, Some("строка".to_string()));
+            }
+            _ => panic!("Expected lambda"),
+        }
+    }
+
+    #[test]
+    fn test_parse_lambda_with_return_type() {
+        let mut input = "функ(a: число, b: число): число возврат a + b; конец";
+        let expr = parse_expression(&mut input).unwrap();
+        match expr {
+            Expression::Lambda(l) => {
+                assert_eq!(l.params.len(), 2);
+                assert_eq!(l.params[0].name, "a");
+                assert_eq!(l.params[0].type_annotation, Some("число".to_string()));
+                assert_eq!(l.params[1].name, "b");
+                assert_eq!(l.params[1].type_annotation, Some("число".to_string()));
+                assert_eq!(l.body.len(), 1);
             }
             _ => panic!("Expected lambda"),
         }

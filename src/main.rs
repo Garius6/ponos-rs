@@ -1,6 +1,6 @@
 use rustyline::error::ReadlineError;
 use rustyline::{DefaultEditor, Result};
-mod ponos;
+use ponos_rs::ponos;
 use std::env;
 use std::fs;
 
