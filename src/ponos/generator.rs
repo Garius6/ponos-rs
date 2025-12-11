@@ -94,20 +94,29 @@ impl Generator {
                 }
             }
             Statement::Assignment(assign) => {
+                // Для Index нужен особый порядок, поэтому проверяем заранее
+                match &assign.target {
+                    AssignmentTarget::Index(object, index) => {
+                        // SetIndex ожидает на стеке: object (низ), index, value (верх)
+                        self.emit_expression((**object).clone(), ctx);
+                        self.emit_expression((**index).clone(), ctx);
+                        self.emit_expression(assign.value, ctx);
+                        ctx.opcodes.push(OpCode::SetIndex);
+                        return;
+                    }
+                    _ => {}
+                }
+
+                // Для остальных случаев сначала значение
                 self.emit_expression(assign.value, ctx);
                 match assign.target {
                     AssignmentTarget::Identifier(name) => {
-                        if ctx.in_function {
-                            // Сначала проверяем локальные переменные
-                            if let Some(slot) = ctx.local_slots.get(&name) {
-                                ctx.opcodes.push(OpCode::SetLocal(*slot));
-                            }
-                            // Затем проверяем upvalues
-                            else if let Some(upvalue_idx) = self.resolve_upvalue(&name, ctx) {
+                        if let Some(slot) = ctx.local_slots.get(&name) {
+                            ctx.opcodes.push(OpCode::SetLocal(*slot));
+                        } else if ctx.in_function {
+                            if let Some(upvalue_idx) = self.resolve_upvalue(&name, ctx) {
                                 ctx.opcodes.push(OpCode::SetUpvalue(upvalue_idx));
-                            }
-                            // Иначе это глобальная переменная
-                            else {
+                            } else {
                                 let mangled_name = self.mangle_name(&name, ctx);
                                 let name_idx = self.intern_string(&mangled_name, ctx);
                                 ctx.opcodes.push(OpCode::SetGlobal(name_idx));
@@ -119,7 +128,7 @@ impl Generator {
                         }
                     }
                     AssignmentTarget::FieldAccess(object, field) => {
-                        // Значение уже на стеке (строка 97)
+                        // Значение уже на стеке (строка 111)
                         // Вычислить объект
                         self.emit_expression((*object).clone(), ctx);
 
@@ -127,6 +136,10 @@ impl Generator {
                         let field_name_idx = self.intern_string(&field, ctx);
                         ctx.opcodes.push(OpCode::SetProperty);
                         ctx.opcodes.push(OpCode::Constant(field_name_idx));
+                    }
+                    AssignmentTarget::Index(_, _) => {
+                        // Уже обработано выше (строки 99-106)
+                        unreachable!()
                     }
                 }
             }
@@ -292,6 +305,51 @@ impl Generator {
             Statement::AnnotationDecl(_) => {
                 // Заглушка для фазы 4
             }
+            Statement::Try(try_stmt) => {
+                // Placeholder для адреса начала catch-блока
+                let handler_pos = ctx.opcodes.len();
+                ctx.opcodes.push(OpCode::PushExceptionHandler(0));
+
+                // Тело try
+                for stmt in try_stmt.try_body {
+                    self.emit_statement(stmt, ctx);
+                }
+
+                // Успешное завершение: снимаем обработчик и перепрыгиваем catch
+                ctx.opcodes.push(OpCode::PopExceptionHandler);
+                let jump_over_catch = self.emit_jump(ctx, OpCode::Jump(0));
+
+                // Начало catch-блока
+                let catch_start = ctx.opcodes.len();
+                ctx.opcodes[handler_pos] = OpCode::PushExceptionHandler(catch_start);
+
+                // Исключение будет на стеке: сохраняем в локальную переменную или удаляем
+                if let Some(var_name) = try_stmt.catch_var {
+                    let slot = if let Some(slot) = ctx.local_slots.get(&var_name) {
+                        *slot
+                    } else {
+                        let slot = ctx.next_local_slot;
+                        ctx.next_local_slot += 1;
+                        ctx.local_slots.insert(var_name, slot);
+                        slot
+                    };
+                    ctx.opcodes.push(OpCode::DefineLocal(slot));
+                } else {
+                    ctx.opcodes.push(OpCode::Pop);
+                }
+
+                // Тело catch
+                for stmt in try_stmt.catch_body {
+                    self.emit_statement(stmt, ctx);
+                }
+
+                // Патчим прыжок через catch-блок
+                self.patch_jump(ctx, jump_over_catch);
+            }
+            Statement::Throw(throw_stmt) => {
+                self.emit_expression(throw_stmt.expression, ctx);
+                ctx.opcodes.push(OpCode::Throw);
+            }
         }
     }
 
@@ -368,17 +426,12 @@ impl Generator {
                 ctx.opcodes.push(OpCode::Constant(idx))
             }
             Expression::Identifier(name, _) => {
-                if ctx.in_function {
-                    // Сначала проверяем локальные переменные
-                    if let Some(slot) = self.resolve_local(&name, ctx) {
-                        ctx.opcodes.push(OpCode::GetLocal(slot));
-                    }
-                    // Затем проверяем upvalues
-                    else if let Some(upvalue_idx) = self.resolve_upvalue(&name, ctx) {
+                if let Some(slot) = self.resolve_local(&name, ctx) {
+                    ctx.opcodes.push(OpCode::GetLocal(slot));
+                } else if ctx.in_function {
+                    if let Some(upvalue_idx) = self.resolve_upvalue(&name, ctx) {
                         ctx.opcodes.push(OpCode::GetUpvalue(upvalue_idx));
-                    }
-                    // Иначе это глобальная переменная
-                    else {
+                    } else {
                         let mangled_name = self.mangle_name(&name, ctx);
                         let name_idx = self.intern_string(&mangled_name, ctx);
                         ctx.opcodes.push(OpCode::GetGlobal(name_idx));
@@ -571,6 +624,23 @@ impl Generator {
                 let method_name_idx = self.intern_string(&method_name, ctx);
                 ctx.opcodes.push(OpCode::GetSuper);
                 ctx.opcodes.push(OpCode::Constant(method_name_idx));
+            }
+            Expression::ArrayLiteral(array_literal) => {
+                // Генерируем код для каждого элемента массива
+                for elem in &array_literal.elements {
+                    self.emit_expression(elem.clone(), ctx);
+                }
+                // Опкод создания массива
+                ctx.opcodes.push(OpCode::Array(array_literal.elements.len()));
+            }
+            Expression::DictLiteral(dict_literal) => {
+                // Генерируем код для каждой пары (ключ, значение)
+                for (key, value) in &dict_literal.pairs {
+                    self.emit_expression(key.clone(), ctx);
+                    self.emit_expression(value.clone(), ctx);
+                }
+                // Опкод создания словаря
+                ctx.opcodes.push(OpCode::Dict(dict_literal.pairs.len()));
             }
         }
     }

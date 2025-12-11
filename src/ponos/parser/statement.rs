@@ -7,6 +7,7 @@ use crate::ponos::parser::combinator::{Input, PResult, char_};
 use crate::ponos::parser::lexer::{
     parse_identifier, keyword_var, keyword_func, keyword_end,
     keyword_if, keyword_else, keyword_while, keyword_return,
+    keyword_try, keyword_catch, keyword_throw,
     keyword_export, skip_ws_and_comments
 };
 use crate::ponos::parser::expression::parse_expression;
@@ -22,6 +23,8 @@ pub fn parse_statement<'a>(input: &mut Input<'a>) -> PResult<'a, Statement> {
         parse_annotation_declaration,
         parse_var_statement,
         parse_function_declaration,
+        parse_try_statement,
+        parse_throw_statement,
         parse_if_statement,
         parse_while_statement,
         parse_return_statement,
@@ -264,6 +267,95 @@ pub fn parse_while_statement<'a>(input: &mut Input<'a>) -> PResult<'a, Statement
     }))
 }
 
+/// Парсит оператор throw: исключение <expression> ;
+pub fn parse_throw_statement<'a>(input: &mut Input<'a>) -> PResult<'a, Statement> {
+    let start = input.len();
+
+    keyword_throw(input)?;
+    skip_ws_and_comments(input)?;
+
+    let expression = parse_expression(input)?;
+    skip_ws_and_comments(input)?;
+    char_(';').parse_next(input)?;
+
+    let end = input.len();
+    let span = Span::new(start - end, start);
+
+    Ok(Statement::Throw(Box::new(ThrowStatement { expression, span })))
+}
+
+/// Парсит try-catch блок: попытка ... перехват [ид] ... конец
+pub fn parse_try_statement<'a>(input: &mut Input<'a>) -> PResult<'a, Statement> {
+    let start = input.len();
+
+    keyword_try(input)?;
+    skip_ws_and_comments(input)?;
+
+    let mut try_body = Vec::new();
+    loop {
+        skip_ws_and_comments(input)?;
+
+        // Останавливаемся перед началом блока перехвата
+        let checkpoint = input.checkpoint();
+        if keyword_catch(input).is_ok() {
+            input.reset(&checkpoint);
+            break;
+        }
+        input.reset(&checkpoint);
+
+        let stmt = parse_statement(input)?;
+        try_body.push(stmt);
+    }
+
+    keyword_catch(input)?;
+    skip_ws_and_comments(input)?;
+
+    let catch_var = {
+        let checkpoint = input.checkpoint();
+        match parse_identifier(input) {
+            Ok(name) => {
+                // Если сразу после идентификатора идёт вызов/скобка, считаем, что переменной нет
+                let mut after = *input;
+                skip_ws_and_comments(&mut after).ok();
+                if after.starts_with('(') {
+                    input.reset(&checkpoint);
+                    None
+                } else {
+                    skip_ws_and_comments(input)?;
+                    Some(name.to_string())
+                }
+            }
+            Err(_) => {
+                input.reset(&checkpoint);
+                None
+            }
+        }
+    };
+
+    let mut catch_body = Vec::new();
+    loop {
+        skip_ws_and_comments(input)?;
+        let checkpoint = input.checkpoint();
+        if keyword_end(input).is_ok() {
+            break;
+        }
+        input.reset(&checkpoint);
+
+        let stmt = parse_statement(input)?;
+        catch_body.push(stmt);
+    }
+
+    let end = input.len();
+    let span = Span::new(start - end, start);
+
+    Ok(Statement::Try(Box::new(TryStatement {
+        try_body,
+        catch_var,
+        catch_body,
+        span,
+    })))
+}
+
 /// Парсит return оператор: возврат [expr] ;
 pub fn parse_return_statement<'a>(input: &mut Input<'a>) -> PResult<'a, Statement> {
     let start = input.len();
@@ -318,14 +410,20 @@ pub fn parse_assignment_statement<'a>(input: &mut Input<'a>) -> PResult<'a, Stat
 
 /// Парсит target присваивания (identifier или expr.field)
 fn parse_assignment_target<'a>(input: &mut Input<'a>) -> PResult<'a, AssignmentTarget> {
-    // Пытаемся спарсить выражение (может быть это.поле, obj.поле и т.д.)
+    // Пытаемся спарсить выражение (может быть это.поле, obj.поле, obj[index] и т.д.)
     let expr = parse_expression(input)?;
 
-    // Проверяем, это FieldAccess?
+    // Проверяем тип выражения
     match expr {
         Expression::Identifier(name, _) => Ok(AssignmentTarget::Identifier(name)),
         Expression::FieldAccess(obj) => {
             Ok(AssignmentTarget::FieldAccess(Box::new(obj.object), obj.field))
+        }
+        Expression::Index(index_expr) => {
+            Ok(AssignmentTarget::Index(
+                Box::new(index_expr.object),
+                Box::new(index_expr.index),
+            ))
         }
         _ => {
             use crate::ponos::parser::error::{PonosParseError, ParseErrorKind};
@@ -1247,6 +1345,60 @@ mod tests {
                 assert_eq!(annotation.is_exported, false);
             }
             _ => panic!("Expected AnnotationDecl"),
+        }
+    }
+
+    #[test]
+    fn test_parse_throw_statement() {
+        let mut input: Input = "исключение \"ошибка\"; ";
+        let stmt = parse_statement(&mut input).expect("throw parsed");
+        match stmt {
+            Statement::Throw(throw_stmt) => match *throw_stmt {
+                ThrowStatement { expression: Expression::String(text, _), .. } => {
+                    assert_eq!(text, "ошибка")
+                }
+                other => panic!("Unexpected expression in throw: {:?}", other),
+            },
+            other => panic!("Expected Throw statement, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_try_catch_statement() {
+        let mut input: Input = r#"
+попытка
+    исключение "внутри";
+перехват err
+    возврат;
+конец
+"#;
+        let stmt = parse_statement(&mut input).expect("try-catch parsed");
+        match stmt {
+            Statement::Try(try_stmt) => {
+                assert_eq!(try_stmt.try_body.len(), 1);
+                assert_eq!(try_stmt.catch_body.len(), 1);
+                assert_eq!(try_stmt.catch_var.as_deref(), Some("err"));
+            }
+            other => panic!("Expected Try statement, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_try_catch_without_var() {
+        let mut input: Input = r#"
+попытка
+    исключение "внутри";
+перехват
+    вывести("ok");
+конец
+"#;
+        let stmt = parse_statement(&mut input).expect("try-catch without var parsed");
+        match stmt {
+            Statement::Try(try_stmt) => {
+                assert!(try_stmt.catch_var.is_none());
+                assert_eq!(try_stmt.catch_body.len(), 1);
+            }
+            other => panic!("Expected Try statement, got {:?}", other),
         }
     }
 }

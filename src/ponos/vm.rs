@@ -2,7 +2,9 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use crate::ponos::{
     opcode::OpCode,
-    value::{self, BoundMethod, Class, Closure, Function, Instance, NativeFnId, Upvalue, Value},
+    value::{
+        self, BoundMethod, Class, Closure, Function, Instance, NativeFnId, Upvalue, Value, ValueKey,
+    },
 };
 
 #[derive(Debug)]
@@ -12,6 +14,13 @@ struct CallFrame {
     ip: usize,
     base: usize, // Базовый индекс в стеке
     upvalues: Vec<Rc<RefCell<Upvalue>>>,
+    exception_handlers: Vec<ExceptionHandler>,
+}
+
+#[derive(Debug, Clone)]
+struct ExceptionHandler {
+    handler_addr: usize,
+    stack_size: usize,
 }
 
 type NativeFn = fn(&[Value]) -> Result<Value, String>;
@@ -26,13 +35,23 @@ pub struct VM {
 
 impl<'a> VM {
     pub fn new() -> Self {
-        VM {
+        let mut vm = VM {
             stack: Vec::new(),
             globals: HashMap::new(),
             frames: Vec::new(),
             native_functions: Vec::new(),
             open_upvalues: Vec::new(),
-        }
+        };
+
+        // Регистрируем встроенные функции
+        vm.register_builtin_functions();
+
+        vm
+    }
+
+    fn register_builtin_functions(&mut self) {
+        self.register_and_define("длина", builtin_len);
+        self.register_and_define("вывести", builtin_print)
     }
 
     pub fn execute(&mut self, opcodes: Vec<OpCode>, constants: &mut Vec<Value>) {
@@ -42,6 +61,7 @@ impl<'a> VM {
             ip: 0,
             base: 0,
             upvalues: Vec::new(),
+            exception_handlers: Vec::new(),
         });
 
         while !self.frames.is_empty() {
@@ -233,6 +253,26 @@ impl<'a> VM {
                         self.frames[frame_idx].ip = addr;
                         continue;
                     }
+                }
+                OpCode::PushExceptionHandler(handler_addr) => {
+                    let handler = ExceptionHandler {
+                        handler_addr,
+                        stack_size: self.stack.len(),
+                    };
+                    self.frames[frame_idx]
+                        .exception_handlers
+                        .push(handler);
+                }
+                OpCode::PopExceptionHandler => {
+                    self.frames[frame_idx]
+                        .exception_handlers
+                        .pop()
+                        .expect("PopExceptionHandler без установленного обработчика");
+                }
+                OpCode::Throw => {
+                    let exception_value = self.stack.pop().expect("Стек пуст при Throw");
+                    self.handle_exception(exception_value);
+                    continue;
                 }
                 OpCode::Call(arg_count) => {
                     let callee_idx = self.stack.len() - arg_count - 1;
@@ -489,8 +529,96 @@ impl<'a> VM {
                                 .collect();
                             self.stack.push(Value::String(slice));
                         }
+                        // Индексирование массива
+                        (Value::Array(arr), Value::Number(n)) => {
+                            let idx = *n as usize;
+                            let array = arr.borrow();
+                            if idx >= array.len() {
+                                panic!(
+                                    "Индекс {} вне диапазона для массива длиной {}",
+                                    idx,
+                                    array.len()
+                                );
+                            }
+                            self.stack.push(array[idx].clone());
+                        }
+                        // Срез массива
+                        (Value::Array(arr), Value::Range(start, end)) => {
+                            let array = arr.borrow();
+                            let start_idx = start.unwrap_or(0.0) as usize;
+                            let end_idx = end.unwrap_or(array.len() as f64) as usize;
+
+                            if start_idx > array.len()
+                                || end_idx > array.len()
+                                || start_idx > end_idx
+                            {
+                                panic!(
+                                    "Некорректные границы среза: [{}:{}] для массива длиной {}",
+                                    start_idx,
+                                    end_idx,
+                                    array.len()
+                                );
+                            }
+
+                            let slice: Vec<Value> = array[start_idx..end_idx].to_vec();
+                            self.stack.push(Value::Array(Rc::new(RefCell::new(slice))));
+                        }
+                        // Индексирование словаря
+                        (Value::Dict(dict), key_value) => {
+                            let key =
+                                ValueKey::from_value(key_value).expect("Некорректный ключ словаря");
+                            let dictionary = dict.borrow();
+                            match dictionary.get(&key) {
+                                Some(value) => self.stack.push(value.clone()),
+                                None => self.stack.push(Value::Nil), // Ключ не найден
+                            }
+                        }
                         _ => panic!("Индексирование не поддерживается для данных типов"),
                     }
+                }
+                OpCode::SetIndex => {
+                    let value = self.stack.pop().unwrap();
+                    let index = self.stack.pop().unwrap();
+                    let object = self.stack.pop().unwrap();
+
+                    match (object, &index) {
+                        (Value::Array(arr), Value::Number(n)) => {
+                            let idx = *n as usize;
+                            let mut array = arr.borrow_mut();
+                            if idx >= array.len() {
+                                panic!("Индекс {} вне диапазона", idx);
+                            }
+                            array[idx] = value.clone();
+                            self.stack.push(value); // Присваивание возвращает значение
+                        }
+                        (Value::Dict(dict), key_value) => {
+                            let key = ValueKey::from_value(key_value).expect("Некорректный ключ");
+                            dict.borrow_mut().insert(key, value.clone());
+                            self.stack.push(value);
+                        }
+                        _ => panic!("Установка индекса не поддерживается"),
+                    }
+                }
+                OpCode::Array(count) => {
+                    let mut elements = Vec::new();
+                    // Собираем элементы со стека (в обратном порядке)
+                    for _ in 0..count {
+                        elements.insert(0, self.stack.pop().unwrap());
+                    }
+                    self.stack
+                        .push(Value::Array(Rc::new(RefCell::new(elements))));
+                }
+                OpCode::Dict(count) => {
+                    let mut map = HashMap::new();
+                    // Собираем пары со стека
+                    for _ in 0..count {
+                        let value = self.stack.pop().unwrap();
+                        let key_value = self.stack.pop().unwrap();
+                        let key =
+                            ValueKey::from_value(&key_value).expect("Некорректный ключ словаря");
+                        map.insert(key, value);
+                    }
+                    self.stack.push(Value::Dict(Rc::new(RefCell::new(map))));
                 }
                 OpCode::DefineGlobal(name_idx) => {
                     let name = self.expect_string(&self.frames[frame_idx].constants, name_idx);
@@ -536,6 +664,55 @@ impl<'a> VM {
                 self.frames[frame_idx].ip += 1;
             }
         }
+    }
+
+    fn handle_exception(&mut self, exception_value: Value) {
+        while let Some(frame_idx) = self.frames.len().checked_sub(1) {
+            if let Some(handler) = {
+                let frame = self.frames.get_mut(frame_idx).expect("frame missing");
+                frame.exception_handlers.pop()
+            } {
+                let handler_addr = handler.handler_addr;
+                let stack_size = handler.stack_size;
+
+                // Восстанавливаем стек к моменту входа в try
+                self.close_upvalues_from(stack_size);
+                self.stack.truncate(stack_size);
+
+                // Значение исключения доступно в catch
+                self.stack.push(exception_value);
+
+                // Переходим на начало catch-блока
+                if let Some(frame) = self.frames.get_mut(frame_idx) {
+                    frame.ip = handler_addr;
+                }
+                return;
+            }
+
+            // В этом фрейме обработчиков нет — раскручиваемся выше
+            let base = self.frames[frame_idx].base;
+            self.close_upvalues_from(base);
+            self.frames.pop();
+            self.stack.truncate(base);
+        }
+
+        // Обработчик не найден
+        self.handle_unhandled_exception(exception_value);
+    }
+
+    fn handle_unhandled_exception(&self, exception_value: Value) {
+        eprintln!("Необработанное исключение:");
+        match exception_value {
+            Value::String(s) => eprintln!("  {}", s),
+            other => eprintln!("  {:?}", other),
+        }
+
+        eprintln!("\nСтек вызовов:");
+        for (i, frame) in self.frames.iter().rev().enumerate() {
+            eprintln!("  #{} на инструкции {}", i, frame.ip);
+        }
+
+        panic!("Программа завершена из-за необработанного исключения");
     }
 
     fn binary_logical_op<F>(&mut self, f: F)
@@ -625,6 +802,7 @@ impl<'a> VM {
             ip: 0,
             base: final_base,
             upvalues: Vec::new(),
+            exception_handlers: Vec::new(),
         });
 
         Ok(())
@@ -649,6 +827,7 @@ impl<'a> VM {
             ip: 0,
             base: final_base,
             upvalues: closure.upvalues.clone(),
+            exception_handlers: Vec::new(),
         });
 
         Ok(())
@@ -703,6 +882,35 @@ impl<'a> VM {
         let id = self.register_native(func);
         self.globals
             .insert(name.to_string(), Value::NativeFunction(id));
+    }
+}
+
+// Встроенные функции
+
+fn builtin_len(args: &[Value]) -> Result<Value, String> {
+    if args.len() != 1 {
+        return Err("длина() требует ровно 1 аргумент".to_string());
+    }
+
+    match &args[0] {
+        Value::String(s) => Ok(Value::Number(s.chars().count() as f64)),
+        Value::Array(arr) => Ok(Value::Number(arr.borrow().len() as f64)),
+        Value::Dict(dict) => Ok(Value::Number(dict.borrow().len() as f64)),
+        _ => Err("длина() поддерживает только строки, массивы и словари".to_string()),
+    }
+}
+
+fn builtin_print(args: &[Value]) -> Result<Value, String> {
+    if args.len() != 1 {
+        return Err("вывести() требует ровно 1 аргумент".to_string());
+    }
+
+    match &args[0] {
+        Value::String(s) => {
+            println!("{}", s);
+            Ok(Value::Nil)
+        }
+        _ => Err("вывести() поддерживает только строки".to_string()),
     }
 }
 
