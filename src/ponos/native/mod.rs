@@ -1,6 +1,7 @@
 pub mod fs;
 pub mod io;
 pub mod json;
+pub mod net;
 pub mod strings;
 pub mod system;
 
@@ -64,7 +65,16 @@ impl NativeModuleRegistry {
 
         registry.register_module(NativeModule {
             name: "стд/json".to_string(),
-            exports: vec!["разобрать".to_string(), "сериализовать".to_string()],
+            exports: vec!["десериализовать".to_string(), "сериализовать".to_string()],
+        });
+
+        registry.register_module(NativeModule {
+            name: "стд/сеть".to_string(),
+            exports: vec![
+                "запрос".to_string(),
+                "получить".to_string(),
+                "запрос_json".to_string(),
+            ],
         });
 
         registry
@@ -179,11 +189,28 @@ impl NativeModuleRegistry {
                 for export in &module.exports {
                     let mangled_name = format!("{}::{}", namespace, export);
                     match export.as_str() {
-                        "разобрать" => {
+                        "десериализовать" => {
                             vm.register_and_define(&mangled_name, json::json_parse);
                         }
                         "сериализовать" => {
                             vm.register_and_define(&mangled_name, json::json_stringify);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            "стд/сеть" => {
+                for export in &module.exports {
+                    let mangled_name = format!("{}::{}", namespace, export);
+                    match export.as_str() {
+                        "запрос" => {
+                            vm.register_and_define(&mangled_name, net::http_request);
+                        }
+                        "получить" => {
+                            vm.register_and_define(&mangled_name, net::http_get);
+                        }
+                        "запрос_json" => {
+                            vm.register_and_define(&mangled_name, net::http_request_json);
                         }
                         _ => {}
                     }

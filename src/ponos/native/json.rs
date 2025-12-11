@@ -4,7 +4,7 @@ use serde_json::Value as JsonValue;
 
 use crate::ponos::value::{Value, ValueKey};
 
-fn json_to_value(value: &JsonValue) -> Result<Value, String> {
+pub(crate) fn json_to_value(value: &JsonValue) -> Result<Value, String> {
     match value {
         JsonValue::Null => Ok(Value::Nil),
         JsonValue::Bool(b) => Ok(Value::Boolean(*b)),
@@ -30,7 +30,7 @@ fn json_to_value(value: &JsonValue) -> Result<Value, String> {
     }
 }
 
-fn value_to_json(value: &Value) -> Result<JsonValue, String> {
+pub(crate) fn value_to_json(value: &Value) -> Result<JsonValue, String> {
     match value {
         Value::Nil => Ok(JsonValue::Null),
         Value::Boolean(b) => Ok(JsonValue::Bool(*b)),
@@ -63,10 +63,10 @@ fn value_to_json(value: &Value) -> Result<JsonValue, String> {
     }
 }
 
-/// json.разобрать(строка) -> Value
+/// json.десериализовать(строка) -> Value
 pub fn json_parse(args: &[Value]) -> Result<Value, String> {
     if args.len() != 1 {
-        return Err("разобрать требует 1 аргумент: строку с JSON".to_string());
+        return Err("десериализовать требует 1 аргумент: строку с JSON".to_string());
     }
 
     let source = match &args[0] {
