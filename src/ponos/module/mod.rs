@@ -1,7 +1,6 @@
 mod loader;
 mod resolver;
 
-pub use loader::ModuleLoader;
 pub use resolver::{LoadedModule, ModuleResolver};
 
 use crate::ponos::ast::{ModuleBlock, Program, Statement};

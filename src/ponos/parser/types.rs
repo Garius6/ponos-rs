@@ -1,5 +1,4 @@
 use crate::ponos::parser::combinator::{Input, PResult};
-use winnow::prelude::*;
 
 /// Тип аннотации (временная заглушка, будет расширена)
 #[derive(Debug, Clone, PartialEq)]

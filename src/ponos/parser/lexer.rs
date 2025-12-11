@@ -1,7 +1,7 @@
 use crate::ponos::parser::combinator::{Input, PResult, identifier as ident_parser, keyword};
 use crate::ponos::parser::error::{ParseErrorKind, PonosParseError};
 use crate::ponos::span::Span;
-use winnow::combinator::{alt, preceded};
+use winnow::combinator::alt;
 use winnow::prelude::*;
 use winnow::token::take_while;
 

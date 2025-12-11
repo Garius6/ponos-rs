@@ -37,10 +37,7 @@ impl NameResolver {
         stmt: &mut Statement,
         symbol_table: &SymbolTable,
     ) -> Result<(), String> {
-        use crate::ponos::ast::{
-            AssignmentStatement, AssignmentTarget, FuncDecl, IfStatement, ModuleBlock,
-            ReturnStatement, VarDecl, WhileStatement,
-        };
+        use crate::ponos::ast::AssignmentTarget;
 
         match stmt {
             Statement::VarDecl(var_decl) => {
@@ -106,9 +103,7 @@ impl NameResolver {
         expr: &mut Expression,
         symbol_table: &SymbolTable,
     ) -> Result<(), String> {
-        use crate::ponos::ast::{
-            BinaryExpr, CallExpr, FieldAccessExpr, LambdaExpr, ModuleAccessExpr, UnaryExpr,
-        };
+        use crate::ponos::ast::ModuleAccessExpr;
 
         match expr {
             Expression::Binary(binary) => {

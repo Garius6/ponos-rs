@@ -1,6 +1,5 @@
 use crate::ponos::ast::*;
 use crate::ponos::parser::combinator::{Input, PResult, char_};
-use crate::ponos::parser::error::{ParseErrorKind, PonosParseError};
 use crate::ponos::parser::lexer::{
     keyword_and, keyword_end, keyword_func, keyword_or, keyword_super, keyword_this, parse_bool,
     parse_identifier, parse_number, parse_string, skip_ws_and_comments,
