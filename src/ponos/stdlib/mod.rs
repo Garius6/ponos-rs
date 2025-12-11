@@ -6,8 +6,11 @@ pub static EMBEDDED_STDLIB: Lazy<HashMap<&'static str, &'static str>> = Lazy::ne
     let mut map = HashMap::new();
 
     // Встраиваем исходники .pns файлов на этапе компиляции
-    map.insert("стд/математика", include_str!("../../../stdlib/математика.pns"));
-    
+    map.insert(
+        "стд/математика",
+        include_str!("../../../stdlib/математика.pns"),
+    );
+
     map
 });
 

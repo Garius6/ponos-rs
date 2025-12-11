@@ -1,11 +1,11 @@
+use super::loader::ModuleLoader;
+use crate::ponos::ast::{Program, Statement};
+use crate::ponos::native::NativeModuleRegistry;
+use crate::ponos::parser::PonosParser;
+use crate::ponos::span::Span;
+use crate::ponos::symbol_table::{ScopeId, Symbol, SymbolKind, SymbolTable};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use crate::ponos::ast::{Program, Statement};
-use crate::ponos::parser::PonosParser;
-use crate::ponos::symbol_table::{SymbolTable, ScopeId, Symbol, SymbolKind};
-use crate::ponos::span::Span;
-use crate::ponos::native::NativeModuleRegistry;
-use super::loader::ModuleLoader;
 
 /// Загруженный модуль с метаданными
 #[derive(Debug, Clone)]
@@ -107,7 +107,8 @@ impl ModuleResolver {
         let source = self.loader.read_module_file(&module_path)?;
 
         // 6. Парсим модуль
-        let ast = self.parser
+        let ast = self
+            .parser
             .parse(source)
             .map_err(|e| format!("Ошибка парсинга модуля {}: {:?}", module_path.display(), e))?;
 
@@ -136,7 +137,8 @@ impl ModuleResolver {
         self.loader.end_loading(&module_path);
 
         // 13. Кэшируем
-        self.loaded_modules.insert(module_path, loaded_module.clone());
+        self.loaded_modules
+            .insert(module_path, loaded_module.clone());
 
         Ok(loaded_module)
     }
@@ -148,7 +150,9 @@ impl ModuleResolver {
         alias: Option<String>,
         symbol_table: &mut SymbolTable,
     ) -> Result<LoadedModule, String> {
-        let native_module = self.native_registry.get_module(import_path)
+        let native_module = self
+            .native_registry
+            .get_module(import_path)
             .ok_or_else(|| format!("Нативный модуль '{}' не найден", import_path))?;
 
         // Определяем имя пространства имен
@@ -175,7 +179,12 @@ impl ModuleResolver {
             );
             symbol_table
                 .define_in_scope(scope_id, symbol)
-                .map_err(|e| format!("Ошибка регистрации нативной функции '{}': {}", export_name, e))?;
+                .map_err(|e| {
+                    format!(
+                        "Ошибка регистрации нативной функции '{}': {}",
+                        export_name, e
+                    )
+                })?;
         }
 
         // Создаем LoadedModule с фиктивным путём
@@ -203,10 +212,7 @@ impl ModuleResolver {
         }
 
         // Иначе берем последний элемент пути и убираем расширение .pns
-        let last_part = import_path
-            .split('/')
-            .last()
-            .unwrap_or(import_path);
+        let last_part = import_path.split('/').last().unwrap_or(import_path);
 
         // Убираем расширение .pns, если есть
         if let Some(name_without_ext) = last_part.strip_suffix(".pns") {
@@ -271,7 +277,9 @@ impl ModuleResolver {
                     );
                     symbol_table
                         .define_in_scope(scope_id, symbol)
-                        .map_err(|e| format!("Ошибка регистрации переменной '{}': {}", var_decl.name, e))?;
+                        .map_err(|e| {
+                            format!("Ошибка регистрации переменной '{}': {}", var_decl.name, e)
+                        })?;
                 }
                 Statement::FuncDecl(func_decl) if func_decl.is_exported => {
                     let symbol = Symbol::new(
@@ -282,7 +290,9 @@ impl ModuleResolver {
                     );
                     symbol_table
                         .define_in_scope(scope_id, symbol)
-                        .map_err(|e| format!("Ошибка регистрации функции '{}': {}", func_decl.name, e))?;
+                        .map_err(|e| {
+                            format!("Ошибка регистрации функции '{}': {}", func_decl.name, e)
+                        })?;
                 }
                 Statement::ClassDecl(class_decl) if class_decl.is_exported => {
                     let symbol = Symbol::new(
@@ -293,7 +303,9 @@ impl ModuleResolver {
                     );
                     symbol_table
                         .define_in_scope(scope_id, symbol)
-                        .map_err(|e| format!("Ошибка регистрации класса '{}': {}", class_decl.name, e))?;
+                        .map_err(|e| {
+                            format!("Ошибка регистрации класса '{}': {}", class_decl.name, e)
+                        })?;
                 }
                 Statement::InterfaceDecl(interface_decl) if interface_decl.is_exported => {
                     let symbol = Symbol::new(
@@ -304,7 +316,12 @@ impl ModuleResolver {
                     );
                     symbol_table
                         .define_in_scope(scope_id, symbol)
-                        .map_err(|e| format!("Ошибка регистрации интерфейса '{}': {}", interface_decl.name, e))?;
+                        .map_err(|e| {
+                            format!(
+                                "Ошибка регистрации интерфейса '{}': {}",
+                                interface_decl.name, e
+                            )
+                        })?;
                 }
                 Statement::AnnotationDecl(annotation_decl) if annotation_decl.is_exported => {
                     let symbol = Symbol::new(
@@ -315,7 +332,12 @@ impl ModuleResolver {
                     );
                     symbol_table
                         .define_in_scope(scope_id, symbol)
-                        .map_err(|e| format!("Ошибка регистрации аннотации '{}': {}", annotation_decl.name, e))?;
+                        .map_err(|e| {
+                            format!(
+                                "Ошибка регистрации аннотации '{}': {}",
+                                annotation_decl.name, e
+                            )
+                        })?;
                 }
                 _ => {}
             }
@@ -327,8 +349,8 @@ impl ModuleResolver {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
     use std::env;
+    use std::fs;
 
     #[test]
     fn test_extract_namespace_simple() {
@@ -356,7 +378,7 @@ mod tests {
 
     #[test]
     fn test_collect_exports() {
-        use crate::ponos::ast::{VarDecl, FuncDecl, Statement};
+        use crate::ponos::ast::{FuncDecl, Statement, VarDecl};
         use crate::ponos::span::Span;
 
         let ast = Program {
@@ -410,12 +432,8 @@ mod tests {
 
         let mut resolver = ModuleResolver::new();
         let mut symbol_table = SymbolTable::new();
-        let result = resolver.load_module(
-            module_path.to_str().unwrap(),
-            None,
-            None,
-            &mut symbol_table,
-        );
+        let result =
+            resolver.load_module(module_path.to_str().unwrap(), None, None, &mut symbol_table);
 
         assert!(result.is_ok());
         let loaded = result.unwrap();

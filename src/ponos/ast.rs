@@ -92,22 +92,22 @@ pub struct ReturnStatement {
 
 #[derive(Debug, Clone)]
 pub struct TryStatement {
-    pub try_body: Vec<Statement>,           // Блок кода попытки
-    pub catch_var: Option<String>,          // Имя переменной для исключения (опционально)
-    pub catch_body: Vec<Statement>,         // Блок обработчика
+    pub try_body: Vec<Statement>,   // Блок кода попытки
+    pub catch_var: Option<String>,  // Имя переменной для исключения (опционально)
+    pub catch_body: Vec<Statement>, // Блок обработчика
     pub span: Span,
 }
 
 #[derive(Debug, Clone)]
 pub struct ThrowStatement {
-    pub expression: Expression,  // Выражение, которое должно вычислиться в строку
+    pub expression: Expression, // Выражение, которое должно вычислиться в строку
     pub span: Span,
 }
 
 #[derive(Debug, Clone)]
 pub enum AssignmentTarget {
     Identifier(String),
-    FieldAccess(Box<Expression>, String), // объект.поле
+    FieldAccess(Box<Expression>, String),    // объект.поле
     Index(Box<Expression>, Box<Expression>), // объект[индекс]
 }
 
@@ -348,15 +348,15 @@ pub struct LambdaExpr {
 
 #[derive(Debug, Clone)]
 pub struct IndexExpr {
-    pub object: Expression,   // строка, массив, или словарь
-    pub index: Expression,    // индекс (число или строка для словарей)
+    pub object: Expression, // строка, массив, или словарь
+    pub index: Expression,  // индекс (число или строка для словарей)
     pub span: Span,
 }
 
 #[derive(Debug, Clone)]
 pub struct RangeExpr {
-    pub start: Option<Box<Expression>>,  // начало (None для [:5])
-    pub end: Option<Box<Expression>>,    // конец (None для [5:])
+    pub start: Option<Box<Expression>>, // начало (None для [:5])
+    pub end: Option<Box<Expression>>,   // конец (None для [5:])
     pub span: Span,
 }
 
@@ -368,6 +368,6 @@ pub struct ArrayLiteral {
 
 #[derive(Debug, Clone)]
 pub struct DictLiteral {
-    pub pairs: Vec<(Expression, Expression)>,  // (ключ, значение)
+    pub pairs: Vec<(Expression, Expression)>, // (ключ, значение)
     pub span: Span,
 }

@@ -1,15 +1,14 @@
+use crate::ponos::ast::*;
+use crate::ponos::parser::combinator::{Input, PResult, char_};
+use crate::ponos::parser::error::{ParseErrorKind, PonosParseError};
+use crate::ponos::parser::lexer::{
+    keyword_and, keyword_end, keyword_func, keyword_or, keyword_super, keyword_this, parse_bool,
+    parse_identifier, parse_number, parse_string, skip_ws_and_comments,
+};
+use crate::ponos::span::Span;
+use winnow::combinator::{alt, delimited, separated};
 use winnow::prelude::*;
 use winnow::stream::Stream;
-use winnow::combinator::{alt, separated, delimited};
-use crate::ponos::ast::*;
-use crate::ponos::span::Span;
-use crate::ponos::parser::combinator::{Input, PResult, char_};
-use crate::ponos::parser::error::{PonosParseError, ParseErrorKind};
-use crate::ponos::parser::lexer::{
-    parse_number, parse_string, parse_bool, parse_identifier,
-    keyword_this, keyword_super, keyword_func, keyword_end,
-    keyword_and, keyword_or, skip_ws_and_comments
-};
 
 /// Главная функция парсинга выражений
 pub fn parse_expression<'a>(input: &mut Input<'a>) -> PResult<'a, Expression> {
@@ -17,7 +16,10 @@ pub fn parse_expression<'a>(input: &mut Input<'a>) -> PResult<'a, Expression> {
 }
 
 /// Парсит бинарные выражения с учетом приоритета (Pratt parsing)
-fn parse_binary_expression<'a>(input: &mut Input<'a>, min_precedence: u8) -> PResult<'a, Expression> {
+fn parse_binary_expression<'a>(
+    input: &mut Input<'a>,
+    min_precedence: u8,
+) -> PResult<'a, Expression> {
     skip_ws_and_comments(input)?;
     let mut left = parse_unary_expression(input)?;
 
@@ -53,10 +55,7 @@ fn parse_binary_expression<'a>(input: &mut Input<'a>, min_precedence: u8) -> PRe
 
         let right = parse_binary_expression(input, next_min_prec)?;
 
-        let span = Span::new(
-            left.span().start,
-            right.span().end,
-        );
+        let span = Span::new(left.span().start, right.span().end);
 
         left = Expression::Binary(Box::new(BinaryExpr {
             left,
@@ -77,13 +76,11 @@ fn parse_binary_operator<'a>(input: &mut Input<'a>) -> PResult<'a, (BinaryOperat
         // Логические операторы (ключевые слова)
         keyword_and.map(|_| BinaryOperator::And),
         keyword_or.map(|_| BinaryOperator::Or),
-
         // Сравнения (двухсимвольные сначала!)
         "==".map(|_| BinaryOperator::Equal),
         "!=".map(|_| BinaryOperator::NotEqual),
         "<=".map(|_| BinaryOperator::LessEqual),
         ">=".map(|_| BinaryOperator::GreaterEqual),
-
         // Односимвольные операторы
         "<".map(|_| BinaryOperator::Less),
         ">".map(|_| BinaryOperator::Greater),
@@ -92,7 +89,8 @@ fn parse_binary_operator<'a>(input: &mut Input<'a>) -> PResult<'a, (BinaryOperat
         "*".map(|_| BinaryOperator::Multiply),
         "/".map(|_| BinaryOperator::Divide),
         "%".map(|_| BinaryOperator::Modulo),
-    )).parse_next(input)?;
+    ))
+    .parse_next(input)?;
 
     let end = input.len();
     let span = Span::new(start - end, start);
@@ -113,7 +111,8 @@ fn parse_unary_expression<'a>(input: &mut Input<'a>) -> PResult<'a, Expression> 
     let op_result: PResult<'a, UnaryOperator> = alt((
         "-".map(|_| UnaryOperator::Negate),
         "!".map(|_| UnaryOperator::Not),
-    )).parse_next(input);
+    ))
+    .parse_next(input);
 
     if let Ok(operator) = op_result {
         skip_ws_and_comments(input)?;
@@ -159,8 +158,9 @@ fn parse_postfix_expression<'a>(input: &mut Input<'a>) -> PResult<'a, Expression
                 let args = separated(
                     0..,
                     parse_expression,
-                    (skip_ws_and_comments, char_(','), skip_ws_and_comments)
-                ).parse_next(input)?;
+                    (skip_ws_and_comments, char_(','), skip_ws_and_comments),
+                )
+                .parse_next(input)?;
 
                 skip_ws_and_comments(input)?;
                 char_(')').parse_next(input)?;
@@ -233,7 +233,7 @@ fn parse_postfix_expression<'a>(input: &mut Input<'a>) -> PResult<'a, Expression
                 };
 
                 // Создаем Range выражение
-                let range_span = Span::new(0, 0);  // TODO: правильный span
+                let range_span = Span::new(0, 0); // TODO: правильный span
                 let range = Expression::Range(Box::new(crate::ponos::ast::RangeExpr {
                     start: first_expr,
                     end: second_expr,
@@ -285,7 +285,8 @@ fn parse_primary_expression<'a>(input: &mut Input<'a>) -> PResult<'a, Expression
         parse_lambda_expr,
         parse_parenthesized_expr,
         parse_identifier_expr,
-    )).parse_next(input)
+    ))
+    .parse_next(input)
 }
 
 fn parse_number_expr<'a>(input: &mut Input<'a>) -> PResult<'a, Expression> {
@@ -344,8 +345,10 @@ fn parse_parenthesized_expr<'a>(input: &mut Input<'a>) -> PResult<'a, Expression
     delimited(
         char_('('),
         (skip_ws_and_comments, parse_expression, skip_ws_and_comments),
-        char_(')')
-    ).parse_next(input).map(|(_, expr, _)| expr)
+        char_(')'),
+    )
+    .parse_next(input)
+    .map(|(_, expr, _)| expr)
 }
 
 fn parse_lambda_expr<'a>(input: &mut Input<'a>) -> PResult<'a, Expression> {
@@ -365,8 +368,9 @@ fn parse_lambda_expr<'a>(input: &mut Input<'a>) -> PResult<'a, Expression> {
         let params: Vec<Parameter> = separated(
             0..,
             parse_parameter,
-            (skip_ws_and_comments, char_(','), skip_ws_and_comments)
-        ).parse_next(input)?;
+            (skip_ws_and_comments, char_(','), skip_ws_and_comments),
+        )
+        .parse_next(input)?;
 
         skip_ws_and_comments(input)?;
         char_(')').parse_next(input)?;

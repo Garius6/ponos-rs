@@ -100,7 +100,12 @@ impl Ponos {
                     );
 
                     // Если это нативный модуль, регистрируем его функции в VM
-                    if loaded_module.file_path.to_str().unwrap_or("").starts_with("<native:") {
+                    if loaded_module
+                        .file_path
+                        .to_str()
+                        .unwrap_or("")
+                        .starts_with("<native:")
+                    {
                         let native_registry = self.module_resolver.native_registry();
                         if let Err(e) = native_registry.register_module_in_vm(
                             &path,

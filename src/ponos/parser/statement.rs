@@ -1,16 +1,15 @@
+use crate::ponos::ast::*;
+use crate::ponos::parser::combinator::{Input, PResult, char_};
+use crate::ponos::parser::expression::parse_expression;
+use crate::ponos::parser::lexer::{
+    keyword_catch, keyword_else, keyword_end, keyword_export, keyword_func, keyword_if,
+    keyword_return, keyword_throw, keyword_try, keyword_var, keyword_while, parse_identifier,
+    skip_ws_and_comments,
+};
+use crate::ponos::span::Span;
+use winnow::combinator::{alt, separated};
 use winnow::prelude::*;
 use winnow::stream::Stream;
-use winnow::combinator::{alt, separated};
-use crate::ponos::ast::*;
-use crate::ponos::span::Span;
-use crate::ponos::parser::combinator::{Input, PResult, char_};
-use crate::ponos::parser::lexer::{
-    parse_identifier, keyword_var, keyword_func, keyword_end,
-    keyword_if, keyword_else, keyword_while, keyword_return,
-    keyword_try, keyword_catch, keyword_throw,
-    keyword_export, skip_ws_and_comments
-};
-use crate::ponos::parser::expression::parse_expression;
 
 /// Парсит оператор (выбирает подходящий парсер)
 pub fn parse_statement<'a>(input: &mut Input<'a>) -> PResult<'a, Statement> {
@@ -29,7 +28,8 @@ pub fn parse_statement<'a>(input: &mut Input<'a>) -> PResult<'a, Statement> {
         parse_while_statement,
         parse_return_statement,
         parse_assignment_or_expression_statement,
-    )).parse_next(input)
+    ))
+    .parse_next(input)
 }
 
 /// Парсит объявление переменной: [экспорт] пер identifier [: type] = expression ;
@@ -111,8 +111,9 @@ pub fn parse_function_declaration<'a>(input: &mut Input<'a>) -> PResult<'a, Stat
         let params: Vec<Parameter> = separated(
             0..,
             parse_parameter,
-            (skip_ws_and_comments, char_(','), skip_ws_and_comments)
-        ).parse_next(input)?;
+            (skip_ws_and_comments, char_(','), skip_ws_and_comments),
+        )
+        .parse_next(input)?;
 
         skip_ws_and_comments(input)?;
         char_(')').parse_next(input)?;
@@ -281,7 +282,10 @@ pub fn parse_throw_statement<'a>(input: &mut Input<'a>) -> PResult<'a, Statement
     let end = input.len();
     let span = Span::new(start - end, start);
 
-    Ok(Statement::Throw(Box::new(ThrowStatement { expression, span })))
+    Ok(Statement::Throw(Box::new(ThrowStatement {
+        expression,
+        span,
+    })))
 }
 
 /// Парсит try-catch блок: попытка ... перехват [ид] ... конец
@@ -376,10 +380,7 @@ pub fn parse_return_statement<'a>(input: &mut Input<'a>) -> PResult<'a, Statemen
     let end = input.len();
     let span = Span::new(start - end, start);
 
-    Ok(Statement::Return(ReturnStatement {
-        value,
-        span,
-    }))
+    Ok(Statement::Return(ReturnStatement { value, span }))
 }
 
 /// Парсит присваивание: (identifier | expr.field) = expression ;
@@ -416,17 +417,16 @@ fn parse_assignment_target<'a>(input: &mut Input<'a>) -> PResult<'a, AssignmentT
     // Проверяем тип выражения
     match expr {
         Expression::Identifier(name, _) => Ok(AssignmentTarget::Identifier(name)),
-        Expression::FieldAccess(obj) => {
-            Ok(AssignmentTarget::FieldAccess(Box::new(obj.object), obj.field))
-        }
-        Expression::Index(index_expr) => {
-            Ok(AssignmentTarget::Index(
-                Box::new(index_expr.object),
-                Box::new(index_expr.index),
-            ))
-        }
+        Expression::FieldAccess(obj) => Ok(AssignmentTarget::FieldAccess(
+            Box::new(obj.object),
+            obj.field,
+        )),
+        Expression::Index(index_expr) => Ok(AssignmentTarget::Index(
+            Box::new(index_expr.object),
+            Box::new(index_expr.index),
+        )),
         _ => {
-            use crate::ponos::parser::error::{PonosParseError, ParseErrorKind};
+            use crate::ponos::parser::error::{ParseErrorKind, PonosParseError};
             Err(winnow::error::ErrMode::Backtrack(PonosParseError::new(
                 ParseErrorKind::Custom("Invalid assignment target".to_string()),
                 Span::new(0, 1),
@@ -437,7 +437,9 @@ fn parse_assignment_target<'a>(input: &mut Input<'a>) -> PResult<'a, AssignmentT
 
 /// Парсит присваивание или выражение-оператор
 /// Эта функция нужна, потому что оба начинаются с идентификатора
-pub fn parse_assignment_or_expression_statement<'a>(input: &mut Input<'a>) -> PResult<'a, Statement> {
+pub fn parse_assignment_or_expression_statement<'a>(
+    input: &mut Input<'a>,
+) -> PResult<'a, Statement> {
     let saved = input.checkpoint();
 
     // Пытаемся спарсить как присваивание
@@ -487,7 +489,7 @@ fn parse_parameter<'a>(input: &mut Input<'a>) -> PResult<'a, Parameter> {
 
 /// Парсит импорт: использовать "path" [как псевдоним] ;
 pub fn parse_import_statement<'a>(input: &mut Input<'a>) -> PResult<'a, Statement> {
-    use crate::ponos::parser::lexer::{keyword_use, keyword_as, parse_string};
+    use crate::ponos::parser::lexer::{keyword_as, keyword_use, parse_string};
     let start = input.len();
 
     keyword_use(input)?;
@@ -510,11 +512,7 @@ pub fn parse_import_statement<'a>(input: &mut Input<'a>) -> PResult<'a, Statemen
     let end = input.len();
     let span = Span::new(start - end, start);
 
-    Ok(Statement::Import(ImportStatement {
-        path,
-        alias,
-        span,
-    }))
+    Ok(Statement::Import(ImportStatement { path, alias, span }))
 }
 
 /// Вспомогательная функция для парсинга списка идентификаторов через запятую
@@ -522,8 +520,9 @@ fn parse_identifier_list<'a>(input: &mut Input<'a>) -> PResult<'a, Vec<String>> 
     let ids: Vec<_> = separated(
         1..,
         |input: &mut Input<'a>| Ok(parse_identifier(input)?.to_string()),
-        (skip_ws_and_comments, char_(','), skip_ws_and_comments)
-    ).parse_next(input)?;
+        (skip_ws_and_comments, char_(','), skip_ws_and_comments),
+    )
+    .parse_next(input)?;
     Ok(ids)
 }
 
@@ -664,8 +663,9 @@ pub fn parse_constructor_declaration<'a>(input: &mut Input<'a>) -> PResult<'a, C
         let params: Vec<Parameter> = separated(
             0..,
             parse_parameter,
-            (skip_ws_and_comments, char_(','), skip_ws_and_comments)
-        ).parse_next(input)?;
+            (skip_ws_and_comments, char_(','), skip_ws_and_comments),
+        )
+        .parse_next(input)?;
 
         skip_ws_and_comments(input)?;
         char_(')').parse_next(input)?;
@@ -693,11 +693,7 @@ pub fn parse_constructor_declaration<'a>(input: &mut Input<'a>) -> PResult<'a, C
     let end = input.len();
     let span = Span::new(start - end, start);
 
-    Ok(ConstructorDecl {
-        params,
-        body,
-        span,
-    })
+    Ok(ConstructorDecl { params, body, span })
 }
 
 /// Парсит объявление интерфейса: [экспорт] интерфейс identifier methods конец
@@ -780,8 +776,9 @@ fn parse_method_signature<'a>(input: &mut Input<'a>) -> PResult<'a, MethodSignat
         let params: Vec<Parameter> = separated(
             0..,
             parse_parameter,
-            (skip_ws_and_comments, char_(','), skip_ws_and_comments)
-        ).parse_next(input)?;
+            (skip_ws_and_comments, char_(','), skip_ws_and_comments),
+        )
+        .parse_next(input)?;
 
         skip_ws_and_comments(input)?;
         char_(')').parse_next(input)?;
@@ -795,11 +792,7 @@ fn parse_method_signature<'a>(input: &mut Input<'a>) -> PResult<'a, MethodSignat
     let end = input.len();
     let span = Span::new(start - end, start);
 
-    Ok(MethodSignature {
-        name,
-        params,
-        span,
-    })
+    Ok(MethodSignature { name, params, span })
 }
 
 /// Парсит объявление аннотации: [экспорт] аннотация identifier statements конец
@@ -1018,12 +1011,10 @@ mod tests {
         let mut input = "результат = x + y;";
         let stmt = parse_statement(&mut input).unwrap();
         match stmt {
-            Statement::Assignment(assign) => {
-                match &assign.target {
-                    AssignmentTarget::Identifier(name) => assert_eq!(name, "результат"),
-                    _ => panic!("Expected identifier target"),
-                }
-            }
+            Statement::Assignment(assign) => match &assign.target {
+                AssignmentTarget::Identifier(name) => assert_eq!(name, "результат"),
+                _ => panic!("Expected identifier target"),
+            },
             _ => panic!("Expected Assignment"),
         }
     }
@@ -1080,7 +1071,10 @@ mod tests {
                 assert_eq!(class.name, "Человек");
                 assert_eq!(class.members.len(), 1);
                 match &class.members[0] {
-                    ClassMember::Field { name, type_annotation } => {
+                    ClassMember::Field {
+                        name,
+                        type_annotation,
+                    } => {
                         assert_eq!(name, "имя");
                         assert_eq!(type_annotation, &Some("строка".to_string()));
                     }
@@ -1204,14 +1198,12 @@ mod tests {
         let mut input = "obj.поле = 42;";
         let stmt = parse_statement(&mut input).unwrap();
         match stmt {
-            Statement::Assignment(assign) => {
-                match &assign.target {
-                    AssignmentTarget::FieldAccess(_, field) => {
-                        assert_eq!(field, "поле");
-                    }
-                    _ => panic!("Expected field access target"),
+            Statement::Assignment(assign) => match &assign.target {
+                AssignmentTarget::FieldAccess(_, field) => {
+                    assert_eq!(field, "поле");
                 }
-            }
+                _ => panic!("Expected field access target"),
+            },
             _ => panic!("Expected Assignment"),
         }
     }
@@ -1354,7 +1346,10 @@ mod tests {
         let stmt = parse_statement(&mut input).expect("throw parsed");
         match stmt {
             Statement::Throw(throw_stmt) => match *throw_stmt {
-                ThrowStatement { expression: Expression::String(text, _), .. } => {
+                ThrowStatement {
+                    expression: Expression::String(text, _),
+                    ..
+                } => {
                     assert_eq!(text, "ошибка")
                 }
                 other => panic!("Unexpected expression in throw: {:?}", other),

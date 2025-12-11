@@ -1,7 +1,7 @@
-use std::path::{Path, PathBuf};
-use std::fs;
-use std::collections::HashSet;
 use crate::ponos::stdlib;
+use std::collections::HashSet;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 /// Загрузчик модулей
 /// Отвечает за разрешение путей модулей и предотвращение циклических зависимостей
@@ -52,7 +52,11 @@ impl ModuleLoader {
     /// - Относительные пути: `./модуль`, `../модуль`
     /// - Абсолютные пути: `/путь/к/модулю`
     /// - Stdlib пути: `стандарт/мат` (если stdlib_path установлен)
-    pub fn resolve_path(&self, module_path: &str, from_file: Option<&Path>) -> Result<PathBuf, String> {
+    pub fn resolve_path(
+        &self,
+        module_path: &str,
+        from_file: Option<&Path>,
+    ) -> Result<PathBuf, String> {
         // Нормализуем путь (удаляем .pns если есть)
         let normalized = if module_path.ends_with(".pns") {
             &module_path[..module_path.len() - 4]
@@ -99,15 +103,27 @@ impl ModuleLoader {
         if pns_path.exists() {
             Ok(pns_path)
         } else {
-            Err(format!("Модуль не найден по абсолютному пути: {}", module_path))
+            Err(format!(
+                "Модуль не найден по абсолютному пути: {}",
+                module_path
+            ))
         }
     }
 
     /// Разрешить относительный путь
-    fn resolve_relative_path(&self, module_path: &str, from_file: Option<&Path>) -> Result<PathBuf, String> {
+    fn resolve_relative_path(
+        &self,
+        module_path: &str,
+        from_file: Option<&Path>,
+    ) -> Result<PathBuf, String> {
         let base_dir = if let Some(file) = from_file {
             file.parent()
-                .ok_or_else(|| format!("Не удалось получить родительский каталог для {}", file.display()))?
+                .ok_or_else(|| {
+                    format!(
+                        "Не удалось получить родительский каталог для {}",
+                        file.display()
+                    )
+                })?
                 .to_path_buf()
         } else {
             self.current_dir.clone()
@@ -121,10 +137,18 @@ impl ModuleLoader {
         };
 
         if pns_path.exists() {
-            Ok(pns_path.canonicalize()
-                .map_err(|e| format!("Не удалось канонизировать путь {}: {}", pns_path.display(), e))?)
+            Ok(pns_path.canonicalize().map_err(|e| {
+                format!(
+                    "Не удалось канонизировать путь {}: {}",
+                    pns_path.display(),
+                    e
+                )
+            })?)
         } else {
-            Err(format!("Модуль не найден по относительному пути: {}", module_path))
+            Err(format!(
+                "Модуль не найден по относительному пути: {}",
+                module_path
+            ))
         }
     }
 
@@ -145,10 +169,19 @@ impl ModuleLoader {
     }
 
     /// Разрешить путь по умолчанию (относительно from_file или current_dir)
-    fn resolve_default_path(&self, module_path: &str, from_file: Option<&Path>) -> Result<PathBuf, String> {
+    fn resolve_default_path(
+        &self,
+        module_path: &str,
+        from_file: Option<&Path>,
+    ) -> Result<PathBuf, String> {
         let base_dir = if let Some(file) = from_file {
             file.parent()
-                .ok_or_else(|| format!("Не удалось получить родительский каталог для {}", file.display()))?
+                .ok_or_else(|| {
+                    format!(
+                        "Не удалось получить родительский каталог для {}",
+                        file.display()
+                    )
+                })?
                 .to_path_buf()
         } else {
             self.current_dir.clone()
@@ -162,8 +195,13 @@ impl ModuleLoader {
         };
 
         if pns_path.exists() {
-            Ok(pns_path.canonicalize()
-                .map_err(|e| format!("Не удалось канонизировать путь {}: {}", pns_path.display(), e))?)
+            Ok(pns_path.canonicalize().map_err(|e| {
+                format!(
+                    "Не удалось канонизировать путь {}: {}",
+                    pns_path.display(),
+                    e
+                )
+            })?)
         } else {
             Err(format!("Модуль не найден: {}", module_path))
         }
@@ -178,8 +216,9 @@ impl ModuleLoader {
                 path.to_path_buf()
             } else {
                 // Обычный модуль - канонизируем
-                path.canonicalize()
-                    .map_err(|e| format!("Не удалось канонизировать путь {}: {}", path.display(), e))?
+                path.canonicalize().map_err(|e| {
+                    format!("Не удалось канонизировать путь {}: {}", path.display(), e)
+                })?
             }
         } else {
             // Обычный модуль - канонизируем
@@ -190,7 +229,10 @@ impl ModuleLoader {
         // Проверяем циклическую зависимость
         if self.loading_stack.contains(&canonical_path) {
             let cycle = self.format_cycle(&canonical_path);
-            return Err(format!("Обнаружена циклическая зависимость модулей:\n{}", cycle));
+            return Err(format!(
+                "Обнаружена циклическая зависимость модулей:\n{}",
+                cycle
+            ));
         }
 
         self.loading_stack.push(canonical_path);
@@ -254,7 +296,11 @@ impl ModuleLoader {
         for (i, path) in self.loading_stack.iter().enumerate() {
             cycle_str.push_str(&format!("  {}. {}\n", i + 1, path.display()));
         }
-        cycle_str.push_str(&format!("  {}. {} (цикл!)\n", self.loading_stack.len() + 1, new_path.display()));
+        cycle_str.push_str(&format!(
+            "  {}. {} (цикл!)\n",
+            self.loading_stack.len() + 1,
+            new_path.display()
+        ));
         cycle_str
     }
 
@@ -359,7 +405,11 @@ mod tests {
         // Пытаемся загрузить тот же модуль снова - должен обнаружить цикл
         let result = loader.begin_loading(&temp_path);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Обнаружена циклическая зависимость"));
+        assert!(
+            result
+                .unwrap_err()
+                .contains("Обнаружена циклическая зависимость")
+        );
 
         // Очистка
         fs::remove_file(temp_path).ok();

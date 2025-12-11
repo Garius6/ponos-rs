@@ -1,8 +1,8 @@
-use winnow::prelude::*;
-use winnow::token::take_while;
-use winnow::stream::{AsChar, Stream};
+use crate::ponos::parser::error::{ParseErrorKind, PonosParseError};
 use crate::ponos::span::Span;
-use crate::ponos::parser::error::{PonosParseError, ParseErrorKind};
+use winnow::prelude::*;
+use winnow::stream::{AsChar, Stream};
+use winnow::token::take_while;
 
 /// Тип входных данных для парсера
 pub type Input<'a> = &'a str;
@@ -105,7 +105,11 @@ pub fn char_<'a>(ch: char) -> impl Parser<Input<'a>, char, PonosParseError> {
         Err(winnow::error::ErrMode::Backtrack(PonosParseError::new(
             ParseErrorKind::UnexpectedToken {
                 expected: vec![ch.to_string()],
-                found: input.chars().next().map(|c| c.to_string()).unwrap_or_else(|| "EOF".to_string()),
+                found: input
+                    .chars()
+                    .next()
+                    .map(|c| c.to_string())
+                    .unwrap_or_else(|| "EOF".to_string()),
             },
             Span::new(0, 1),
         )))

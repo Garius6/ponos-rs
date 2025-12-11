@@ -1,5 +1,6 @@
 pub mod fs;
 pub mod io;
+pub mod json;
 pub mod strings;
 pub mod system;
 
@@ -59,6 +60,11 @@ impl NativeModuleRegistry {
                 "верхний_регистр".to_string(),
                 "нижний_регистр".to_string(),
             ],
+        });
+
+        registry.register_module(NativeModule {
+            name: "стд/json".to_string(),
+            exports: vec!["разобрать".to_string(), "сериализовать".to_string()],
         });
 
         registry
@@ -164,6 +170,20 @@ impl NativeModuleRegistry {
                         }
                         "нижний_регистр" => {
                             vm.register_and_define(&mangled_name, strings::str_to_lower);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            "стд/json" => {
+                for export in &module.exports {
+                    let mangled_name = format!("{}::{}", namespace, export);
+                    match export.as_str() {
+                        "разобрать" => {
+                            vm.register_and_define(&mangled_name, json::json_parse);
+                        }
+                        "сериализовать" => {
+                            vm.register_and_define(&mangled_name, json::json_stringify);
                         }
                         _ => {}
                     }

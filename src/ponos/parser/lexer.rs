@@ -1,9 +1,9 @@
+use crate::ponos::parser::combinator::{Input, PResult, identifier as ident_parser, keyword};
+use crate::ponos::parser::error::{ParseErrorKind, PonosParseError};
+use crate::ponos::span::Span;
+use winnow::combinator::{alt, preceded};
 use winnow::prelude::*;
 use winnow::token::take_while;
-use winnow::combinator::{alt, preceded};
-use crate::ponos::parser::combinator::{Input, PResult, keyword, identifier as ident_parser};
-use crate::ponos::parser::error::{PonosParseError, ParseErrorKind};
-use crate::ponos::span::Span;
 
 /// Парсит число (целое или с плавающей точкой)
 pub fn parse_number<'a>(input: &mut Input<'a>) -> PResult<'a, f64> {
@@ -15,7 +15,9 @@ pub fn parse_number<'a>(input: &mut Input<'a>) -> PResult<'a, f64> {
     // Опционально парсим дробную часть
     let frac_part: Option<&str> = if input.starts_with('.') {
         *input = &input[1..]; // consume '.'
-        take_while::<_, _, PonosParseError>(1.., |c: char| c.is_ascii_digit()).parse_next(input).ok()
+        take_while::<_, _, PonosParseError>(1.., |c: char| c.is_ascii_digit())
+            .parse_next(input)
+            .ok()
     } else {
         None
     };
@@ -47,7 +49,11 @@ pub fn parse_string<'a>(input: &mut Input<'a>) -> PResult<'a, String> {
         return Err(winnow::error::ErrMode::Backtrack(PonosParseError::new(
             ParseErrorKind::UnexpectedToken {
                 expected: vec!["\"".to_string()],
-                found: input.chars().next().map(|c| c.to_string()).unwrap_or_else(|| "EOF".to_string()),
+                found: input
+                    .chars()
+                    .next()
+                    .map(|c| c.to_string())
+                    .unwrap_or_else(|| "EOF".to_string()),
             },
             Span::new(0, 1),
         )));
@@ -71,7 +77,10 @@ pub fn parse_string<'a>(input: &mut Input<'a>) -> PResult<'a, String> {
                 _ => {
                     // Неизвестная escape-последовательность
                     return Err(winnow::error::ErrMode::Backtrack(PonosParseError::new(
-                        ParseErrorKind::InvalidString(format!("Неизвестная escape-последовательность: \\{}", c)),
+                        ParseErrorKind::InvalidString(format!(
+                            "Неизвестная escape-последовательность: \\{}",
+                            c
+                        )),
                         Span::new(0, 2),
                     )));
                 }
@@ -109,7 +118,8 @@ pub fn parse_bool<'a>(input: &mut Input<'a>) -> PResult<'a, bool> {
     alt((
         keyword("истина").map(|_| true),
         keyword("ложь").map(|_| false),
-    )).parse_next(input)
+    ))
+    .parse_next(input)
 }
 
 /// Парсит идентификатор (обертка для удобства)
@@ -329,12 +339,15 @@ mod tests {
         assert_eq!(parse_string(&mut input).unwrap(), "hello world");
 
         let mut input = r#""строка\nс\tэкранированием""#;
-        assert_eq!(parse_string(&mut input).unwrap(), "строка\nс\tэкранированием");
+        assert_eq!(
+            parse_string(&mut input).unwrap(),
+            "строка\nс\tэкранированием"
+        );
 
         let mut input = r#""кавычки: \" и слеш: \\""#;
         assert_eq!(parse_string(&mut input).unwrap(), "кавычки: \" и слеш: \\");
 
-        let mut input = r#""""#;  // пустая строка
+        let mut input = r#""""#; // пустая строка
         assert_eq!(parse_string(&mut input).unwrap(), "");
     }
 

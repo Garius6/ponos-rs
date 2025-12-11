@@ -259,9 +259,7 @@ impl<'a> VM {
                         handler_addr,
                         stack_size: self.stack.len(),
                     };
-                    self.frames[frame_idx]
-                        .exception_handlers
-                        .push(handler);
+                    self.frames[frame_idx].exception_handlers.push(handler);
                 }
                 OpCode::PopExceptionHandler => {
                     self.frames[frame_idx]

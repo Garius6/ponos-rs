@@ -93,7 +93,7 @@ mod tests {
         assert_eq!(loc.line, 0);
         assert_eq!(loc.column, 0);
 
-        let loc = byte_offset_to_location(source, 7);  // начало "line 2"
+        let loc = byte_offset_to_location(source, 7); // начало "line 2"
         assert_eq!(loc.line, 1);
         assert_eq!(loc.column, 0);
 

@@ -1,7 +1,7 @@
-use rustyline::error::ReadlineError;
-use rustyline::{DefaultEditor, Result};
 use ponos_rs::ponos;
 use ponos_rs::ponos::native::system;
+use rustyline::error::ReadlineError;
+use rustyline::{DefaultEditor, Result};
 use std::env;
 use std::fs;
 

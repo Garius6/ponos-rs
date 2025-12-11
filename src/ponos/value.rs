@@ -17,7 +17,9 @@ impl ValueKey {
             Value::Number(n) => Ok(ValueKey::Number(OrderedFloat(*n))),
             Value::String(s) => Ok(ValueKey::String(s.clone())),
             Value::Boolean(b) => Ok(ValueKey::Boolean(*b)),
-            _ => Err("Ключом словаря может быть только число, строка или булево значение".to_string()),
+            _ => Err(
+                "Ключом словаря может быть только число, строка или булево значение".to_string(),
+            ),
         }
     }
 }
@@ -34,9 +36,9 @@ pub enum Value {
     Class(Rc<Class>),
     Instance(Rc<RefCell<Instance>>),
     BoundMethod(Rc<BoundMethod>),
-    Range(Option<f64>, Option<f64>),  // (start, end) для срезов
-    Array(Rc<RefCell<Vec<Value>>>),   // Массив (изменяемый)
-    Dict(Rc<RefCell<HashMap<ValueKey, Value>>>),  // Словарь (изменяемый)
+    Range(Option<f64>, Option<f64>), // (start, end) для срезов
+    Array(Rc<RefCell<Vec<Value>>>),  // Массив (изменяемый)
+    Dict(Rc<RefCell<HashMap<ValueKey, Value>>>), // Словарь (изменяемый)
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -118,17 +120,16 @@ pub fn is_equal(a: &Value, b: &Value) -> bool {
         (Value::Array(a1), Value::Array(a2)) => {
             let arr1 = a1.borrow();
             let arr2 = a2.borrow();
-            arr1.len() == arr2.len() &&
-                arr1.iter().zip(arr2.iter()).all(|(x, y)| is_equal(x, y))
+            arr1.len() == arr2.len() && arr1.iter().zip(arr2.iter()).all(|(x, y)| is_equal(x, y))
         }
         // Словари сравниваются поэлементно
         (Value::Dict(d1), Value::Dict(d2)) => {
             let dict1 = d1.borrow();
             let dict2 = d2.borrow();
-            dict1.len() == dict2.len() &&
-                dict1.iter().all(|(k, v)| {
-                    dict2.get(k).map_or(false, |v2| is_equal(v, v2))
-                })
+            dict1.len() == dict2.len()
+                && dict1
+                    .iter()
+                    .all(|(k, v)| dict2.get(k).map_or(false, |v2| is_equal(v, v2)))
         }
         _ => false,
     }

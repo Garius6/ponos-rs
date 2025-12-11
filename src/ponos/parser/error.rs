@@ -1,6 +1,6 @@
 use crate::ponos::span::Span;
 use std::fmt;
-use winnow::error::{ParserError, ErrorKind, FromExternalError};
+use winnow::error::{ErrorKind, FromExternalError, ParserError};
 use winnow::stream::Stream;
 
 /// Тип ошибки парсинга
@@ -105,9 +105,7 @@ impl ParseErrorKind {
                     )
                 }
             }
-            ParseErrorKind::UnexpectedEof => {
-                "Неожиданный конец файла".to_string()
-            }
+            ParseErrorKind::UnexpectedEof => "Неожиданный конец файла".to_string(),
             ParseErrorKind::InvalidNumber(s) => {
                 format!("Неверный формат числа: '{}'", s)
             }
@@ -124,11 +122,13 @@ impl ParseErrorKind {
     fn hint(&self) -> Option<String> {
         match self {
             ParseErrorKind::UnexpectedToken { expected, .. }
-                if expected.contains(&";".to_string()) => {
+                if expected.contains(&";".to_string()) =>
+            {
                 Some("Возможно, вы забыли поставить точку с запятой?".to_string())
             }
             ParseErrorKind::UnexpectedToken { expected, .. }
-                if expected.contains(&"конец".to_string()) => {
+                if expected.contains(&"конец".to_string()) =>
+            {
                 Some("Возможно, вы забыли закрыть блок словом 'конец'?".to_string())
             }
             ParseErrorKind::UnexpectedEof => {
@@ -156,12 +156,19 @@ impl<I: Stream> ParserError<I> for PonosParseError {
         )
     }
 
-    fn append(self, _input: &I, _token_start: &<I as Stream>::Checkpoint, _kind: ErrorKind) -> Self {
+    fn append(
+        self,
+        _input: &I,
+        _token_start: &<I as Stream>::Checkpoint,
+        _kind: ErrorKind,
+    ) -> Self {
         self
     }
 }
 
-impl<I: Stream, E: std::error::Error + Send + Sync + 'static> FromExternalError<I, E> for PonosParseError {
+impl<I: Stream, E: std::error::Error + Send + Sync + 'static> FromExternalError<I, E>
+    for PonosParseError
+{
     fn from_external_error(_input: &I, _kind: ErrorKind, _e: E) -> Self {
         PonosParseError::new(
             ParseErrorKind::Custom("Внешняя ошибка".to_string()),
@@ -183,7 +190,8 @@ mod tests {
                 found: ";".to_string(),
             },
             Span::new(8, 9),
-        ).with_context("объявление переменной".to_string());
+        )
+        .with_context("объявление переменной".to_string());
 
         let formatted = error.format(source, "<test>");
         assert!(formatted.contains("Ошибка:"));

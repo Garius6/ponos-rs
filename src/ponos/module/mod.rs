@@ -2,13 +2,13 @@ mod loader;
 mod resolver;
 
 pub use loader::ModuleLoader;
-pub use resolver::{ModuleResolver, LoadedModule};
+pub use resolver::{LoadedModule, ModuleResolver};
 
-use std::collections::HashMap;
-use std::path::PathBuf;
-use crate::ponos::ast::{Program, Statement, ModuleBlock};
+use crate::ponos::ast::{ModuleBlock, Program, Statement};
 use crate::ponos::span::Span;
 use crate::ponos::symbol_table::ScopeId;
+use std::collections::HashMap;
+use std::path::PathBuf;
 
 /// Информация об импорте
 #[derive(Debug, Clone)]
@@ -138,29 +138,29 @@ pub fn merge_module_ast(main_ast: &mut Program, loaded_module: LoadedModule) {
     };
 
     // Добавляем ModuleBlock в основной AST
-    main_ast.statements.push(Statement::ModuleBlock(module_block));
+    main_ast
+        .statements
+        .push(Statement::ModuleBlock(module_block));
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::ponos::ast::Program;
-    use crate::ponos::symbol_table::{SymbolTable, SymbolKind, Symbol};
+    use crate::ponos::symbol_table::{Symbol, SymbolKind, SymbolTable};
 
     #[test]
     fn test_import_creation() {
-        let import = Import::new(
-            "стандарт/мат".to_string(),
-            None,
-            Span::new(0, 20),
-        );
+        let import = Import::new("стандарт/мат".to_string(), None, Span::new(0, 20));
         assert_eq!(import.module_path, "стандарт/мат");
         assert!(import.alias.is_none());
     }
 
     #[test]
     fn test_module_creation() {
-        let program = Program { statements: Vec::new() };
+        let program = Program {
+            statements: Vec::new(),
+        };
         let module = Module::new(
             "test_module".to_string(),
             PathBuf::from("/path/to/test.pns"),
@@ -173,7 +173,9 @@ mod tests {
 
     #[test]
     fn test_module_add_import() {
-        let program = Program { statements: Vec::new() };
+        let program = Program {
+            statements: Vec::new(),
+        };
         let mut module = Module::new(
             "test_module".to_string(),
             PathBuf::from("/path/to/test.pns"),
@@ -181,11 +183,7 @@ mod tests {
             ScopeId(1),
         );
 
-        let import = Import::new(
-            "стандарт/мат".to_string(),
-            None,
-            Span::new(0, 20),
-        );
+        let import = Import::new("стандарт/мат".to_string(), None, Span::new(0, 20));
         module.add_import(import);
 
         assert_eq!(module.import_count(), 1);
@@ -202,7 +200,9 @@ mod tests {
     fn test_module_registry_register() {
         let mut registry = ModuleRegistry::new();
 
-        let program = Program { statements: Vec::new() };
+        let program = Program {
+            statements: Vec::new(),
+        };
         let module = Module::new(
             "test_module".to_string(),
             PathBuf::from("/path/to/test.pns"),
@@ -221,7 +221,9 @@ mod tests {
     fn test_module_registry_get() {
         let mut registry = ModuleRegistry::new();
 
-        let program = Program { statements: Vec::new() };
+        let program = Program {
+            statements: Vec::new(),
+        };
         let module = Module::new(
             "test_module".to_string(),
             PathBuf::from("/path/to/test.pns"),
@@ -248,22 +250,34 @@ mod tests {
         let scope_id = symbol_table.push_scope();
 
         // Добавляем символы в scope модуля
-        symbol_table.define_in_scope(scope_id, Symbol::new(
-            "exported_func".to_string(),
-            SymbolKind::Function,
-            true,
-            Span::new(0, 10),
-        )).unwrap();
+        symbol_table
+            .define_in_scope(
+                scope_id,
+                Symbol::new(
+                    "exported_func".to_string(),
+                    SymbolKind::Function,
+                    true,
+                    Span::new(0, 10),
+                ),
+            )
+            .unwrap();
 
-        symbol_table.define_in_scope(scope_id, Symbol::new(
-            "private_var".to_string(),
-            SymbolKind::Variable,
-            false,
-            Span::new(10, 20),
-        )).unwrap();
+        symbol_table
+            .define_in_scope(
+                scope_id,
+                Symbol::new(
+                    "private_var".to_string(),
+                    SymbolKind::Variable,
+                    false,
+                    Span::new(10, 20),
+                ),
+            )
+            .unwrap();
 
         // Создаём модуль с этой областью
-        let program = Program { statements: Vec::new() };
+        let program = Program {
+            statements: Vec::new(),
+        };
         let module = Module::new(
             "test_module".to_string(),
             PathBuf::from("/path/to/test.pns"),

@@ -1,7 +1,5 @@
-use crate::ponos::ast::{
-    Program, Statement, Expression,
-};
-use crate::ponos::symbol_table::{SymbolTable, SymbolKind};
+use crate::ponos::ast::{Expression, Program, Statement};
+use crate::ponos::symbol_table::{SymbolKind, SymbolTable};
 
 /// Разрешитель имен - преобразует FieldAccess в ModuleAccess где необходимо
 ///
@@ -24,11 +22,7 @@ impl NameResolver {
     ///
     /// # Возвращает
     /// `Ok(())` при успехе, `Err(String)` при ошибке
-    pub fn resolve(
-        &mut self,
-        ast: &mut Program,
-        symbol_table: &SymbolTable,
-    ) -> Result<(), String> {
+    pub fn resolve(&mut self, ast: &mut Program, symbol_table: &SymbolTable) -> Result<(), String> {
         // Обрабатываем все statements
         for statement in &mut ast.statements {
             self.resolve_statement(statement, symbol_table)?;
@@ -43,7 +37,10 @@ impl NameResolver {
         stmt: &mut Statement,
         symbol_table: &SymbolTable,
     ) -> Result<(), String> {
-        use crate::ponos::ast::{AssignmentTarget, VarDecl, FuncDecl, AssignmentStatement, IfStatement, WhileStatement, ReturnStatement, ModuleBlock};
+        use crate::ponos::ast::{
+            AssignmentStatement, AssignmentTarget, FuncDecl, IfStatement, ModuleBlock,
+            ReturnStatement, VarDecl, WhileStatement,
+        };
 
         match stmt {
             Statement::VarDecl(var_decl) => {
@@ -109,7 +106,9 @@ impl NameResolver {
         expr: &mut Expression,
         symbol_table: &SymbolTable,
     ) -> Result<(), String> {
-        use crate::ponos::ast::{BinaryExpr, UnaryExpr, CallExpr, FieldAccessExpr, ModuleAccessExpr, LambdaExpr};
+        use crate::ponos::ast::{
+            BinaryExpr, CallExpr, FieldAccessExpr, LambdaExpr, ModuleAccessExpr, UnaryExpr,
+        };
 
         match expr {
             Expression::Binary(binary) => {
@@ -138,7 +137,8 @@ impl NameResolver {
                         // Проверяем, это модуль?
                         if module_symbol.kind == SymbolKind::Module {
                             // Это зарегистрированное пространство имен!
-                            let module_scope_id = module_symbol.module_scope_id
+                            let module_scope_id = module_symbol
+                                .module_scope_id
                                 .ok_or_else(|| format!("Модуль '{}' не имеет scope_id", name))?;
 
                             // Проверяем, что символ экспортирован из модуля
@@ -189,16 +189,16 @@ impl NameResolver {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ponos::ast::{Program, Statement, Expression, VarDecl, FieldAccessExpr, ModuleAccessExpr, BinaryExpr, CallExpr};
+    use crate::ponos::ast::{
+        BinaryExpr, CallExpr, Expression, FieldAccessExpr, ModuleAccessExpr, Program, Statement,
+        VarDecl,
+    };
     use crate::ponos::span::Span;
-    use crate::ponos::symbol_table::{SymbolTable, Symbol, SymbolKind, ScopeId};
+    use crate::ponos::symbol_table::{ScopeId, Symbol, SymbolKind, SymbolTable};
 
     /// Вспомогательная функция для создания SymbolTable с модулем и экспортом
     /// Регистрирует namespace как Symbol::Module в главном scope
-    fn create_module_with_export(
-        module_name: &str,
-        symbol_name: &str,
-    ) -> SymbolTable {
+    fn create_module_with_export(module_name: &str, symbol_name: &str) -> SymbolTable {
         let mut symbol_table = SymbolTable::new();
 
         // Создаём scope для модуля
@@ -211,15 +211,14 @@ mod tests {
             true,
             Span::default(),
         );
-        symbol_table.define_in_scope(module_scope_id, symbol).unwrap();
+        symbol_table
+            .define_in_scope(module_scope_id, symbol)
+            .unwrap();
 
         // Возвращаемся в главный scope и регистрируем namespace как Symbol::Module
         symbol_table.pop_scope();
-        let module_symbol = Symbol::new_module(
-            module_name.to_string(),
-            module_scope_id,
-            Span::default(),
-        );
+        let module_symbol =
+            Symbol::new_module(module_name.to_string(), module_scope_id, Span::default());
         symbol_table.define(module_symbol).unwrap();
 
         symbol_table
@@ -235,19 +234,17 @@ mod tests {
     fn test_resolve_field_access_to_module_access() {
         // Создаем AST: пер x = модуль.символ;
         let mut ast = Program {
-            statements: vec![
-                Statement::VarDecl(VarDecl {
-                    name: "x".to_string(),
-                    type_annotation: None,
-                    initializer: Some(Expression::FieldAccess(Box::new(FieldAccessExpr {
-                        object: Expression::Identifier("модуль".to_string(), Span::default()),
-                        field: "символ".to_string(),
-                        span: Span::default(),
-                    }))),
-                    is_exported: false,
+            statements: vec![Statement::VarDecl(VarDecl {
+                name: "x".to_string(),
+                type_annotation: None,
+                initializer: Some(Expression::FieldAccess(Box::new(FieldAccessExpr {
+                    object: Expression::Identifier("модуль".to_string(), Span::default()),
+                    field: "символ".to_string(),
                     span: Span::default(),
-                }),
-            ],
+                }))),
+                is_exported: false,
+                span: Span::default(),
+            })],
         };
 
         let symbol_table = create_module_with_export("модуль", "символ");
@@ -256,15 +253,13 @@ mod tests {
 
         // Проверяем, что FieldAccess был преобразован в ModuleAccess
         match &ast.statements[0] {
-            Statement::VarDecl(var_decl) => {
-                match &var_decl.initializer {
-                    Some(Expression::ModuleAccess(module_access)) => {
-                        assert_eq!(module_access.namespace, "модуль");
-                        assert_eq!(module_access.symbol, "символ");
-                    }
-                    _ => panic!("Expected ModuleAccess"),
+            Statement::VarDecl(var_decl) => match &var_decl.initializer {
+                Some(Expression::ModuleAccess(module_access)) => {
+                    assert_eq!(module_access.namespace, "модуль");
+                    assert_eq!(module_access.symbol, "символ");
                 }
-            }
+                _ => panic!("Expected ModuleAccess"),
+            },
             _ => panic!("Expected VarDecl"),
         }
     }
@@ -273,19 +268,17 @@ mod tests {
     fn test_does_not_convert_regular_field_access() {
         // Создаем AST: пер x = объект.поле;
         let mut ast = Program {
-            statements: vec![
-                Statement::VarDecl(VarDecl {
-                    name: "x".to_string(),
-                    type_annotation: None,
-                    initializer: Some(Expression::FieldAccess(Box::new(FieldAccessExpr {
-                        object: Expression::Identifier("объект".to_string(), Span::default()),
-                        field: "поле".to_string(),
-                        span: Span::default(),
-                    }))),
-                    is_exported: false,
+            statements: vec![Statement::VarDecl(VarDecl {
+                name: "x".to_string(),
+                type_annotation: None,
+                initializer: Some(Expression::FieldAccess(Box::new(FieldAccessExpr {
+                    object: Expression::Identifier("объект".to_string(), Span::default()),
+                    field: "поле".to_string(),
                     span: Span::default(),
-                }),
-            ],
+                }))),
+                is_exported: false,
+                span: Span::default(),
+            })],
         };
 
         // Создаём модуль, но НЕ регистрируем "объект" как пространство имен
@@ -295,20 +288,18 @@ mod tests {
 
         // Проверяем, что FieldAccess остался без изменений
         match &ast.statements[0] {
-            Statement::VarDecl(var_decl) => {
-                match &var_decl.initializer {
-                    Some(Expression::FieldAccess(field_access)) => {
-                        match &field_access.object {
-                            Expression::Identifier(name, _) => {
-                                assert_eq!(name, "объект");
-                            }
-                            _ => panic!("Expected Identifier"),
+            Statement::VarDecl(var_decl) => match &var_decl.initializer {
+                Some(Expression::FieldAccess(field_access)) => {
+                    match &field_access.object {
+                        Expression::Identifier(name, _) => {
+                            assert_eq!(name, "объект");
                         }
-                        assert_eq!(field_access.field, "поле");
+                        _ => panic!("Expected Identifier"),
                     }
-                    _ => panic!("Expected FieldAccess, not ModuleAccess"),
+                    assert_eq!(field_access.field, "поле");
                 }
-            }
+                _ => panic!("Expected FieldAccess, not ModuleAccess"),
+            },
             _ => panic!("Expected VarDecl"),
         }
     }
@@ -317,24 +308,22 @@ mod tests {
     fn test_resolve_in_binary_expression() {
         // Создаем AST: пер x = модуль.символ + 5;
         let mut ast = Program {
-            statements: vec![
-                Statement::VarDecl(VarDecl {
-                    name: "x".to_string(),
-                    type_annotation: None,
-                    initializer: Some(Expression::Binary(Box::new(BinaryExpr {
-                        left: Expression::FieldAccess(Box::new(FieldAccessExpr {
-                            object: Expression::Identifier("модуль".to_string(), Span::default()),
-                            field: "символ".to_string(),
-                            span: Span::default(),
-                        })),
-                        operator: crate::ponos::ast::BinaryOperator::Add,
-                        right: Expression::Number(5.0, Span::default()),
+            statements: vec![Statement::VarDecl(VarDecl {
+                name: "x".to_string(),
+                type_annotation: None,
+                initializer: Some(Expression::Binary(Box::new(BinaryExpr {
+                    left: Expression::FieldAccess(Box::new(FieldAccessExpr {
+                        object: Expression::Identifier("модуль".to_string(), Span::default()),
+                        field: "символ".to_string(),
                         span: Span::default(),
-                    }))),
-                    is_exported: false,
+                    })),
+                    operator: crate::ponos::ast::BinaryOperator::Add,
+                    right: Expression::Number(5.0, Span::default()),
                     span: Span::default(),
-                }),
-            ],
+                }))),
+                is_exported: false,
+                span: Span::default(),
+            })],
         };
 
         let symbol_table = create_module_with_export("модуль", "символ");
@@ -343,20 +332,16 @@ mod tests {
 
         // Проверяем, что FieldAccess в левой части был преобразован
         match &ast.statements[0] {
-            Statement::VarDecl(var_decl) => {
-                match &var_decl.initializer {
-                    Some(Expression::Binary(binary)) => {
-                        match &binary.left {
-                            Expression::ModuleAccess(module_access) => {
-                                assert_eq!(module_access.namespace, "модуль");
-                                assert_eq!(module_access.symbol, "символ");
-                            }
-                            _ => panic!("Expected ModuleAccess in left operand"),
-                        }
+            Statement::VarDecl(var_decl) => match &var_decl.initializer {
+                Some(Expression::Binary(binary)) => match &binary.left {
+                    Expression::ModuleAccess(module_access) => {
+                        assert_eq!(module_access.namespace, "модуль");
+                        assert_eq!(module_access.symbol, "символ");
                     }
-                    _ => panic!("Expected Binary expression"),
-                }
-            }
+                    _ => panic!("Expected ModuleAccess in left operand"),
+                },
+                _ => panic!("Expected Binary expression"),
+            },
             _ => panic!("Expected VarDecl"),
         }
     }
@@ -365,8 +350,8 @@ mod tests {
     fn test_resolve_in_function_call() {
         // Создаем AST: модуль.функция();
         let mut ast = Program {
-            statements: vec![
-                Statement::Expression(Expression::Call(Box::new(CallExpr {
+            statements: vec![Statement::Expression(Expression::Call(Box::new(
+                CallExpr {
                     callee: Expression::FieldAccess(Box::new(FieldAccessExpr {
                         object: Expression::Identifier("модуль".to_string(), Span::default()),
                         field: "функция".to_string(),
@@ -374,8 +359,8 @@ mod tests {
                     })),
                     arguments: vec![],
                     span: Span::default(),
-                }))),
-            ],
+                },
+            )))],
         };
 
         let symbol_table = create_module_with_export("модуль", "функция");
@@ -384,15 +369,13 @@ mod tests {
 
         // Проверяем, что callee был преобразован
         match &ast.statements[0] {
-            Statement::Expression(Expression::Call(call)) => {
-                match &call.callee {
-                    Expression::ModuleAccess(module_access) => {
-                        assert_eq!(module_access.namespace, "модуль");
-                        assert_eq!(module_access.symbol, "функция");
-                    }
-                    _ => panic!("Expected ModuleAccess in callee"),
+            Statement::Expression(Expression::Call(call)) => match &call.callee {
+                Expression::ModuleAccess(module_access) => {
+                    assert_eq!(module_access.namespace, "модуль");
+                    assert_eq!(module_access.symbol, "функция");
                 }
-            }
+                _ => panic!("Expected ModuleAccess in callee"),
+            },
             _ => panic!("Expected Call expression"),
         }
     }
@@ -403,28 +386,26 @@ mod tests {
     fn test_resolve_multiple_namespaces() {
         // Создаем AST: пер x = мод1.символ + мод2.символ;
         let mut ast = Program {
-            statements: vec![
-                Statement::VarDecl(VarDecl {
-                    name: "x".to_string(),
-                    type_annotation: None,
-                    initializer: Some(Expression::Binary(Box::new(BinaryExpr {
-                        left: Expression::FieldAccess(Box::new(FieldAccessExpr {
-                            object: Expression::Identifier("мод1".to_string(), Span::default()),
-                            field: "символ".to_string(),
-                            span: Span::default(),
-                        })),
-                        operator: crate::ponos::ast::BinaryOperator::Add,
-                        right: Expression::FieldAccess(Box::new(FieldAccessExpr {
-                            object: Expression::Identifier("мод2".to_string(), Span::default()),
-                            field: "символ".to_string(),
-                            span: Span::default(),
-                        })),
+            statements: vec![Statement::VarDecl(VarDecl {
+                name: "x".to_string(),
+                type_annotation: None,
+                initializer: Some(Expression::Binary(Box::new(BinaryExpr {
+                    left: Expression::FieldAccess(Box::new(FieldAccessExpr {
+                        object: Expression::Identifier("мод1".to_string(), Span::default()),
+                        field: "символ".to_string(),
                         span: Span::default(),
-                    }))),
-                    is_exported: false,
+                    })),
+                    operator: crate::ponos::ast::BinaryOperator::Add,
+                    right: Expression::FieldAccess(Box::new(FieldAccessExpr {
+                        object: Expression::Identifier("мод2".to_string(), Span::default()),
+                        field: "символ".to_string(),
+                        span: Span::default(),
+                    })),
                     span: Span::default(),
-                }),
-            ],
+                }))),
+                is_exported: false,
+                span: Span::default(),
+            })],
         };
 
         // Создаём два модуля с экспортированными символами
@@ -432,21 +413,47 @@ mod tests {
 
         // Создаём первый модуль
         let scope_id1 = symbol_table.push_scope();
-        symbol_table.define_in_scope(
-            scope_id1,
-            Symbol::new("символ".to_string(), SymbolKind::Variable, true, Span::default()),
-        ).unwrap();
+        symbol_table
+            .define_in_scope(
+                scope_id1,
+                Symbol::new(
+                    "символ".to_string(),
+                    SymbolKind::Variable,
+                    true,
+                    Span::default(),
+                ),
+            )
+            .unwrap();
         symbol_table.pop_scope();
-        symbol_table.define(Symbol::new_module("мод1".to_string(), scope_id1, Span::default())).unwrap();
+        symbol_table
+            .define(Symbol::new_module(
+                "мод1".to_string(),
+                scope_id1,
+                Span::default(),
+            ))
+            .unwrap();
 
         // Создаём второй модуль
         let scope_id2 = symbol_table.push_scope();
-        symbol_table.define_in_scope(
-            scope_id2,
-            Symbol::new("символ".to_string(), SymbolKind::Variable, true, Span::default()),
-        ).unwrap();
+        symbol_table
+            .define_in_scope(
+                scope_id2,
+                Symbol::new(
+                    "символ".to_string(),
+                    SymbolKind::Variable,
+                    true,
+                    Span::default(),
+                ),
+            )
+            .unwrap();
         symbol_table.pop_scope();
-        symbol_table.define(Symbol::new_module("мод2".to_string(), scope_id2, Span::default())).unwrap();
+        symbol_table
+            .define(Symbol::new_module(
+                "мод2".to_string(),
+                scope_id2,
+                Span::default(),
+            ))
+            .unwrap();
 
         let mut resolver = NameResolver::new();
         resolver.resolve(&mut ast, &symbol_table).unwrap();

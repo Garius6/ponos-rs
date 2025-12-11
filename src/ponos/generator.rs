@@ -194,8 +194,13 @@ impl Generator {
                 }
 
                 // Компилируем тело функции
-                let func_value =
-                    self.compile_function(&func_decl.name, &func_decl.params, &func_decl.body, ctx, false);
+                let func_value = self.compile_function(
+                    &func_decl.name,
+                    &func_decl.params,
+                    &func_decl.body,
+                    ctx,
+                    false,
+                );
 
                 // Получаем количество upvalues из скомпилированной функции
                 let upvalue_count = match &func_value {
@@ -367,7 +372,9 @@ impl Generator {
         }
 
         // Сначала ищем в локальных переменных родителя
-        let parent_local = ctx.parent_context.as_ref()
+        let parent_local = ctx
+            .parent_context
+            .as_ref()
             .and_then(|parent| self.resolve_local(name, parent));
 
         if let Some(local_idx) = parent_local {
@@ -392,7 +399,13 @@ impl Generator {
     }
 
     /// Добавить upvalue в текущий контекст
-    fn add_upvalue(&mut self, ctx: &mut GenContext, name: &str, is_local: bool, index: usize) -> usize {
+    fn add_upvalue(
+        &mut self,
+        ctx: &mut GenContext,
+        name: &str,
+        is_local: bool,
+        index: usize,
+    ) -> usize {
         // Проверяем, не добавлен ли уже этот upvalue
         for (i, upvalue_info) in ctx.upvalues.iter().enumerate() {
             if upvalue_info.name == name {
@@ -489,7 +502,9 @@ impl Generator {
                             crate::ponos::ast::BinaryOperator::Divide => vec![OpCode::Div],
                             crate::ponos::ast::BinaryOperator::Modulo => vec![OpCode::Mod],
                             crate::ponos::ast::BinaryOperator::Equal => vec![OpCode::Eql],
-                            crate::ponos::ast::BinaryOperator::NotEqual => vec![OpCode::Eql, OpCode::Not],
+                            crate::ponos::ast::BinaryOperator::NotEqual => {
+                                vec![OpCode::Eql, OpCode::Not]
+                            }
                             crate::ponos::ast::BinaryOperator::Less => vec![OpCode::Less],
                             crate::ponos::ast::BinaryOperator::LessEqual => {
                                 vec![OpCode::Greater, OpCode::Not]
@@ -557,8 +572,13 @@ impl Generator {
             }
             Expression::Lambda(lambda_expr) => {
                 // Компилируем функцию и собираем upvalues
-                let func_value =
-                    self.compile_function("<lambda>", &lambda_expr.params, &lambda_expr.body, ctx, false);
+                let func_value = self.compile_function(
+                    "<lambda>",
+                    &lambda_expr.params,
+                    &lambda_expr.body,
+                    ctx,
+                    false,
+                );
 
                 // Получаем количество upvalues из скомпилированной функции
                 let upvalue_count = match &func_value {
@@ -631,7 +651,8 @@ impl Generator {
                     self.emit_expression(elem.clone(), ctx);
                 }
                 // Опкод создания массива
-                ctx.opcodes.push(OpCode::Array(array_literal.elements.len()));
+                ctx.opcodes
+                    .push(OpCode::Array(array_literal.elements.len()));
             }
             Expression::DictLiteral(dict_literal) => {
                 // Генерируем код для каждой пары (ключ, значение)
@@ -739,7 +760,6 @@ impl Generator {
         parent_ctx: &mut GenContext,
         is_method: bool, // true для методов и конструкторов
     ) -> Value {
-
         let mut func_ctx = GenContext {
             constants: Vec::new(),
             opcodes: Vec::new(),
