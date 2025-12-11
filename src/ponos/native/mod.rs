@@ -1,5 +1,6 @@
 pub mod fs;
 pub mod io;
+pub mod strings;
 pub mod system;
 
 use crate::ponos::vm::VM;
@@ -41,7 +42,23 @@ impl NativeModuleRegistry {
 
         registry.register_module(NativeModule {
             name: "стд/система".to_string(),
-            exports: vec!["выполнить".to_string()],
+            exports: vec![
+                "выполнить".to_string(),
+                "получить_переменную_среды".to_string(),
+                "установить_переменную_среды".to_string(),
+                "аргументы".to_string(),
+            ],
+        });
+
+        registry.register_module(NativeModule {
+            name: "стд/строки".to_string(),
+            exports: vec![
+                "разделить".to_string(),
+                "обрезать".to_string(),
+                "заменить".to_string(),
+                "верхний_регистр".to_string(),
+                "нижний_регистр".to_string(),
+            ],
         });
 
         registry
@@ -63,8 +80,14 @@ impl NativeModuleRegistry {
     }
 
     /// Зарегистрировать функции нативного модуля в VM
-    pub fn register_module_in_vm(&self, module_path: &str, namespace: &str, vm: &mut VM) -> Result<(), String> {
-        let module = self.get_module(module_path)
+    pub fn register_module_in_vm(
+        &self,
+        module_path: &str,
+        namespace: &str,
+        vm: &mut VM,
+    ) -> Result<(), String> {
+        let module = self
+            .get_module(module_path)
             .ok_or_else(|| format!("Нативный модуль '{}' не найден", module_path))?;
 
         // Регистрируем функции с манглированными именами
@@ -109,6 +132,38 @@ impl NativeModuleRegistry {
                     match export.as_str() {
                         "выполнить" => {
                             vm.register_and_define(&mangled_name, system::sys_execute);
+                        }
+                        "получить_переменную_среды" => {
+                            vm.register_and_define(&mangled_name, system::env_get);
+                        }
+                        "установить_переменную_среды" => {
+                            vm.register_and_define(&mangled_name, system::env_set);
+                        }
+                        "аргументы" => {
+                            vm.register_and_define(&mangled_name, system::get_args);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            "стд/строки" => {
+                for export in &module.exports {
+                    let mangled_name = format!("{}::{}", namespace, export);
+                    match export.as_str() {
+                        "разделить" => {
+                            vm.register_and_define(&mangled_name, strings::str_split);
+                        }
+                        "обрезать" => {
+                            vm.register_and_define(&mangled_name, strings::str_trim);
+                        }
+                        "заменить" => {
+                            vm.register_and_define(&mangled_name, strings::str_replace);
+                        }
+                        "верхний_регистр" => {
+                            vm.register_and_define(&mangled_name, strings::str_to_upper);
+                        }
+                        "нижний_регистр" => {
+                            vm.register_and_define(&mangled_name, strings::str_to_lower);
                         }
                         _ => {}
                     }

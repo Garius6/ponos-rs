@@ -232,6 +232,18 @@ pub fn keyword_return<'a>(input: &mut Input<'a>) -> PResult<'a, ()> {
     keyword("возврат").parse_next(input)
 }
 
+pub fn keyword_try<'a>(input: &mut Input<'a>) -> PResult<'a, ()> {
+    keyword("попытка").parse_next(input)
+}
+
+pub fn keyword_catch<'a>(input: &mut Input<'a>) -> PResult<'a, ()> {
+    keyword("перехват").parse_next(input)
+}
+
+pub fn keyword_throw<'a>(input: &mut Input<'a>) -> PResult<'a, ()> {
+    keyword("исключение").parse_next(input)
+}
+
 pub fn keyword_export<'a>(input: &mut Input<'a>) -> PResult<'a, ()> {
     keyword("экспорт").parse_next(input)
 }

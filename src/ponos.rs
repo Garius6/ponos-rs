@@ -2,7 +2,7 @@ mod ast;
 mod generator;
 mod module;
 mod name_resolver;
-mod native;
+pub mod native;
 mod opcode;
 mod parser;
 mod span;

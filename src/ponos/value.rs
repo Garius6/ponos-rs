@@ -1,6 +1,26 @@
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use crate::ponos::opcode::OpCode;
+use ordered_float::OrderedFloat;
+
+/// Ключ для словаря - может быть любым типом Value
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum ValueKey {
+    Number(OrderedFloat<f64>),
+    String(String),
+    Boolean(bool),
+}
+
+impl ValueKey {
+    pub fn from_value(v: &Value) -> Result<ValueKey, String> {
+        match v {
+            Value::Number(n) => Ok(ValueKey::Number(OrderedFloat(*n))),
+            Value::String(s) => Ok(ValueKey::String(s.clone())),
+            Value::Boolean(b) => Ok(ValueKey::Boolean(*b)),
+            _ => Err("Ключом словаря может быть только число, строка или булево значение".to_string()),
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 pub enum Value {
@@ -15,6 +35,8 @@ pub enum Value {
     Instance(Rc<RefCell<Instance>>),
     BoundMethod(Rc<BoundMethod>),
     Range(Option<f64>, Option<f64>),  // (start, end) для срезов
+    Array(Rc<RefCell<Vec<Value>>>),   // Массив (изменяемый)
+    Dict(Rc<RefCell<HashMap<ValueKey, Value>>>),  // Словарь (изменяемый)
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -92,6 +114,22 @@ pub fn is_equal(a: &Value, b: &Value) -> bool {
         (Value::Range(s1, e1), Value::Range(s2, e2)) => s1 == s2 && e1 == e2,
         // Instance сравнивается по ссылке (идентичность объектов)
         (Value::Instance(a), Value::Instance(b)) => Rc::ptr_eq(a, b),
+        // Массивы сравниваются поэлементно
+        (Value::Array(a1), Value::Array(a2)) => {
+            let arr1 = a1.borrow();
+            let arr2 = a2.borrow();
+            arr1.len() == arr2.len() &&
+                arr1.iter().zip(arr2.iter()).all(|(x, y)| is_equal(x, y))
+        }
+        // Словари сравниваются поэлементно
+        (Value::Dict(d1), Value::Dict(d2)) => {
+            let dict1 = d1.borrow();
+            let dict2 = d2.borrow();
+            dict1.len() == dict2.len() &&
+                dict1.iter().all(|(k, v)| {
+                    dict2.get(k).map_or(false, |v2| is_equal(v, v2))
+                })
+        }
         _ => false,
     }
 }
@@ -111,6 +149,8 @@ impl PartialEq for Value {
             (Value::Instance(a), Value::Instance(b)) => Rc::ptr_eq(a, b),
             (Value::BoundMethod(a), Value::BoundMethod(b)) => Rc::ptr_eq(a, b),
             (Value::NativeFunction(a), Value::NativeFunction(b)) => a == b,
+            (Value::Array(a), Value::Array(b)) => Rc::ptr_eq(a, b),
+            (Value::Dict(a), Value::Dict(b)) => Rc::ptr_eq(a, b),
             _ => false,
         }
     }

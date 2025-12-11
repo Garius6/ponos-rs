@@ -275,6 +275,8 @@ fn parse_primary_expression<'a>(input: &mut Input<'a>) -> PResult<'a, Expression
     skip_ws_and_comments(input)?;
 
     alt((
+        parse_array_literal,
+        parse_dict_literal,
         parse_number_expr,
         parse_string_expr,
         parse_bool_expr,
@@ -434,6 +436,90 @@ fn parse_parameter<'a>(input: &mut Input<'a>) -> PResult<'a, Parameter> {
         type_annotation,
         span,
     })
+}
+
+/// Парсит литерал массива: [элемент1, элемент2, ...]
+fn parse_array_literal<'a>(input: &mut Input<'a>) -> PResult<'a, Expression> {
+    let start = input.len();
+    char_('[').parse_next(input)?;
+    skip_ws_and_comments(input)?;
+
+    // Проверяем пустой массив
+    let checkpoint = input.checkpoint();
+    if char_(']').parse_next(input).is_ok() {
+        let end = input.len();
+        let span = Span::new(start - end, start);
+        return Ok(Expression::ArrayLiteral(Box::new(ArrayLiteral {
+            elements: Vec::new(),
+            span,
+        })));
+    }
+    input.reset(&checkpoint);
+
+    // Парсим элементы через запятую
+    let elements = separated(
+        1..,
+        parse_expression,
+        (skip_ws_and_comments, char_(','), skip_ws_and_comments),
+    )
+    .parse_next(input)?;
+
+    skip_ws_and_comments(input)?;
+    char_(']').parse_next(input)?;
+
+    let end = input.len();
+    let span = Span::new(start - end, start);
+    Ok(Expression::ArrayLiteral(Box::new(ArrayLiteral {
+        elements,
+        span,
+    })))
+}
+
+/// Парсит литерал словаря: {ключ1: значение1, ключ2: значение2, ...}
+fn parse_dict_literal<'a>(input: &mut Input<'a>) -> PResult<'a, Expression> {
+    let start = input.len();
+    char_('{').parse_next(input)?;
+    skip_ws_and_comments(input)?;
+
+    // Проверяем пустой словарь
+    let checkpoint = input.checkpoint();
+    if char_('}').parse_next(input).is_ok() {
+        let end = input.len();
+        let span = Span::new(start - end, start);
+        return Ok(Expression::DictLiteral(Box::new(DictLiteral {
+            pairs: Vec::new(),
+            span,
+        })));
+    }
+    input.reset(&checkpoint);
+
+    // Парсим пары ключ: значение
+    let pairs = separated(
+        1..,
+        parse_dict_pair,
+        (skip_ws_and_comments, char_(','), skip_ws_and_comments),
+    )
+    .parse_next(input)?;
+
+    skip_ws_and_comments(input)?;
+    char_('}').parse_next(input)?;
+
+    let end = input.len();
+    let span = Span::new(start - end, start);
+    Ok(Expression::DictLiteral(Box::new(DictLiteral {
+        pairs,
+        span,
+    })))
+}
+
+/// Парсит пару ключ: значение для словаря
+fn parse_dict_pair<'a>(input: &mut Input<'a>) -> PResult<'a, (Expression, Expression)> {
+    let key = parse_expression(input)?;
+    skip_ws_and_comments(input)?;
+    char_(':').parse_next(input)?;
+    skip_ws_and_comments(input)?;
+    let value = parse_expression(input)?;
+    Ok((key, value))
 }
 
 #[cfg(test)]

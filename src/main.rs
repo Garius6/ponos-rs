@@ -1,15 +1,19 @@
 use rustyline::error::ReadlineError;
 use rustyline::{DefaultEditor, Result};
 use ponos_rs::ponos;
+use ponos_rs::ponos::native::system;
 use std::env;
 use std::fs;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
 
+    // Устанавливаем аргументы командной строки для доступа из Ponos программ
+    system::set_cli_args(args.clone());
+
     if args.len() == 1 {
         _ = run_repl();
-    } else if args.len() == 2 {
+    } else if args.len() >= 2 {
         run_file(args[1].clone());
     }
 }

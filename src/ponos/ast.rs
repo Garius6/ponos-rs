@@ -24,6 +24,8 @@ pub enum Statement {
     If(IfStatement),
     While(WhileStatement),
     Return(ReturnStatement),
+    Try(Box<TryStatement>),
+    Throw(Box<ThrowStatement>),
     Assignment(AssignmentStatement),
     Expression(Expression),
 }
@@ -89,9 +91,24 @@ pub struct ReturnStatement {
 }
 
 #[derive(Debug, Clone)]
+pub struct TryStatement {
+    pub try_body: Vec<Statement>,           // Блок кода попытки
+    pub catch_var: Option<String>,          // Имя переменной для исключения (опционально)
+    pub catch_body: Vec<Statement>,         // Блок обработчика
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct ThrowStatement {
+    pub expression: Expression,  // Выражение, которое должно вычислиться в строку
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
 pub enum AssignmentTarget {
     Identifier(String),
     FieldAccess(Box<Expression>, String), // объект.поле
+    Index(Box<Expression>, Box<Expression>), // объект[индекс]
 }
 
 #[derive(Debug, Clone)]
@@ -204,6 +221,10 @@ pub enum Expression {
     Index(Box<IndexExpr>),
     Range(Box<RangeExpr>),
 
+    // Коллекции
+    ArrayLiteral(Box<ArrayLiteral>),
+    DictLiteral(Box<DictLiteral>),
+
     // Специальные
     This(Span),
     Super(String, Span), // Super(method_name, span)
@@ -224,6 +245,8 @@ impl Expression {
             Expression::Lambda(e) => e.span,
             Expression::Index(e) => e.span,
             Expression::Range(e) => e.span,
+            Expression::ArrayLiteral(e) => e.span,
+            Expression::DictLiteral(e) => e.span,
             Expression::This(s) => *s,
             Expression::Super(_, s) => *s,
         }
@@ -334,5 +357,17 @@ pub struct IndexExpr {
 pub struct RangeExpr {
     pub start: Option<Box<Expression>>,  // начало (None для [:5])
     pub end: Option<Box<Expression>>,    // конец (None для [5:])
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct ArrayLiteral {
+    pub elements: Vec<Expression>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct DictLiteral {
+    pub pairs: Vec<(Expression, Expression)>,  // (ключ, значение)
     pub span: Span,
 }
