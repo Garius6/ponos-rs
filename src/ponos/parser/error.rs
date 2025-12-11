@@ -108,10 +108,11 @@ impl PonosParseError {
             ));
 
             // Подчеркивание ошибки
+            let error_line_char_count = error_line.chars().count();
             let underline_len = if start_loc.line == end_loc.line {
                 (end_loc.column - start_loc.column).max(1)
             } else {
-                error_line.len() - start_loc.column
+                error_line_char_count.saturating_sub(start_loc.column)
             };
 
             output.push_str(&format!(
@@ -125,9 +126,18 @@ impl PonosParseError {
             ));
 
             // Добавляем текст что именно неправильно
-            let found_text = if start_loc.column < error_line.len() {
-                let end_col = (start_loc.column + underline_len).min(error_line.len());
-                &error_line[start_loc.column..end_col]
+            let found_text = if start_loc.column < error_line_char_count {
+                let start_byte = error_line
+                    .char_indices()
+                    .nth(start_loc.column)
+                    .map(|(idx, _)| idx)
+                    .unwrap_or(error_line.len());
+                let end_byte = error_line
+                    .char_indices()
+                    .nth(start_loc.column + underline_len)
+                    .map(|(idx, _)| idx)
+                    .unwrap_or(error_line.len());
+                &error_line[start_byte..end_byte.min(error_line.len())]
             } else {
                 ""
             };

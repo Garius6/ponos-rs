@@ -11,6 +11,8 @@ mod symbol_table;
 mod value;
 mod vm;
 
+pub use parser::{ParseErrorKind, PonosParseError};
+
 use module::{ModuleResolver, merge_module_ast};
 use name_resolver::NameResolver;
 use std::path::PathBuf;
@@ -38,6 +40,11 @@ impl Ponos {
             name_resolver: NameResolver::new(),
             symbol_table: SymbolTable::new(),
         };
+    }
+
+    /// Вернуть AST, не запуская его (для тестов и инструментов)
+    pub fn parse_only(&mut self, source: String) -> Result<ast::Program, PonosParseError> {
+        self.parser.parse(source)
     }
 
     pub fn run_source(&mut self, source: String) {

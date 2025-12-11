@@ -6,8 +6,9 @@ pub mod statement;
 pub mod types;
 
 use crate::ponos::ast::Program;
-use combinator::{Input, PResult, ws};
+use combinator::{Input, PResult, set_source_length, ws};
 pub use error::{ParseErrorKind, PonosParseError};
+use winnow::error::ErrMode;
 use winnow::Parser;
 
 /// Главный парсер Ponos
@@ -23,6 +24,7 @@ impl PonosParser {
     /// Парсит исходный код в AST
     pub fn parse(&mut self, source: String) -> Result<Program, PonosParseError> {
         let mut input = source.as_str();
+        set_source_length(source.len());
 
         match parse_program(&mut input) {
             Ok(program) => {
@@ -39,16 +41,13 @@ impl PonosParser {
                 }
                 Ok(program)
             }
-            Err(e) => {
-                if let winnow::error::ErrMode::Backtrack(err) = e {
-                    Err(err)
-                } else {
-                    Err(PonosParseError::new(
-                        ParseErrorKind::Custom("Неизвестная ошибка парсинга".to_string()),
-                        crate::ponos::span::Span::default(),
-                    ))
-                }
-            }
+            Err(e) => match e {
+                ErrMode::Backtrack(err) | ErrMode::Cut(err) => Err(err),
+                _ => Err(PonosParseError::new(
+                    ParseErrorKind::Custom("Неизвестная ошибка парсинга".to_string()),
+                    crate::ponos::span::Span::default(),
+                )),
+            },
         }
     }
 }
@@ -62,18 +61,20 @@ impl Default for PonosParser {
 /// Парсит программу (список операторов)
 fn parse_program<'a>(input: &mut Input<'a>) -> PResult<'a, Program> {
     use crate::ponos::parser::lexer::skip_ws_and_comments;
-    use winnow::combinator::repeat;
 
     skip_ws_and_comments(input)?;
 
-    // Парсим список операторов
-    let statements: Vec<_> = repeat(0.., |input: &mut Input<'a>| {
+    let mut statements = Vec::new();
+
+    loop {
         skip_ws_and_comments(input)?;
+        if input.is_empty() {
+            break;
+        }
+
         let stmt = statement::parse_statement(input)?;
-        skip_ws_and_comments(input)?;
-        Ok(stmt)
-    })
-    .parse_next(input)?;
+        statements.push(stmt);
+    }
 
     Ok(Program { statements })
 }

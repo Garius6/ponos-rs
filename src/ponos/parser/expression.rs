@@ -1,16 +1,20 @@
 use crate::ponos::ast::*;
-use crate::ponos::parser::combinator::{Input, PResult, char_};
+use crate::ponos::parser::combinator::{
+    ensure_source_length, Input, PResult, char_, offset_from_remaining, span_from_remaining,
+};
 use crate::ponos::parser::lexer::{
     keyword_and, keyword_end, keyword_func, keyword_or, keyword_super, keyword_this, parse_bool,
     parse_identifier, parse_number, parse_string, skip_ws_and_comments,
 };
 use crate::ponos::span::Span;
+use winnow::error::ErrMode;
 use winnow::combinator::{alt, delimited, separated};
 use winnow::prelude::*;
 use winnow::stream::Stream;
 
 /// Главная функция парсинга выражений
 pub fn parse_expression<'a>(input: &mut Input<'a>) -> PResult<'a, Expression> {
+    ensure_source_length(input.len());
     parse_binary_expression(input, 0)
 }
 
@@ -92,7 +96,7 @@ fn parse_binary_operator<'a>(input: &mut Input<'a>) -> PResult<'a, (BinaryOperat
     .parse_next(input)?;
 
     let end = input.len();
-    let span = Span::new(start - end, start);
+    let span = span_from_remaining(start, end);
 
     Ok((op, span))
 }
@@ -117,7 +121,7 @@ fn parse_unary_expression<'a>(input: &mut Input<'a>) -> PResult<'a, Expression> 
         skip_ws_and_comments(input)?;
         let operand = parse_unary_expression(input)?;
         let end = input.len();
-        let span = Span::new(start - end, start);
+        let span = span_from_remaining(start, end);
 
         Ok(Expression::Unary(Box::new(UnaryExpr {
             operator,
@@ -167,7 +171,7 @@ fn parse_postfix_expression<'a>(input: &mut Input<'a>) -> PResult<'a, Expression
                 args
             };
 
-            let span = Span::new(expr.span().start, input.len());
+            let span = Span::new(expr.span().start, offset_from_remaining(input.len()));
 
             expr = Expression::Call(Box::new(CallExpr {
                 callee: expr,
@@ -183,7 +187,7 @@ fn parse_postfix_expression<'a>(input: &mut Input<'a>) -> PResult<'a, Expression
         if char_('.').parse_next(input).is_ok() {
             skip_ws_and_comments(input)?;
             let field = parse_identifier(input)?.to_string();
-            let span = Span::new(expr.span().start, input.len());
+            let span = Span::new(expr.span().start, offset_from_remaining(input.len()));
 
             expr = Expression::FieldAccess(Box::new(FieldAccessExpr {
                 object: expr,
@@ -196,6 +200,7 @@ fn parse_postfix_expression<'a>(input: &mut Input<'a>) -> PResult<'a, Expression
         input.reset(&saved);
 
         // Индексирование: expr[index] или срез: expr[start:end]
+        let bracket_start_remaining = input.len();
         if char_('[').parse_next(input).is_ok() {
             skip_ws_and_comments(input)?;
 
@@ -232,14 +237,17 @@ fn parse_postfix_expression<'a>(input: &mut Input<'a>) -> PResult<'a, Expression
                 };
 
                 // Создаем Range выражение
-                let range_span = Span::new(0, 0); // TODO: правильный span
+                let range_span = Span::new(
+                    offset_from_remaining(bracket_start_remaining),
+                    offset_from_remaining(input.len()),
+                );
                 let range = Expression::Range(Box::new(crate::ponos::ast::RangeExpr {
                     start: first_expr,
                     end: second_expr,
                     span: range_span,
                 }));
 
-                let span = Span::new(expr.span().start, input.len());
+                let span = Span::new(expr.span().start, offset_from_remaining(input.len()));
                 expr = Expression::Index(Box::new(crate::ponos::ast::IndexExpr {
                     object: expr,
                     index: range,
@@ -250,7 +258,7 @@ fn parse_postfix_expression<'a>(input: &mut Input<'a>) -> PResult<'a, Expression
                 skip_ws_and_comments(input)?;
                 char_(']').parse_next(input)?;
 
-                let span = Span::new(expr.span().start, input.len());
+                let span = Span::new(expr.span().start, offset_from_remaining(input.len()));
                 expr = Expression::Index(Box::new(crate::ponos::ast::IndexExpr {
                     object: expr,
                     index: *first_expr.unwrap(),
@@ -292,7 +300,7 @@ fn parse_number_expr<'a>(input: &mut Input<'a>) -> PResult<'a, Expression> {
     let start = input.len();
     let num = parse_number(input)?;
     let end = input.len();
-    let span = Span::new(start - end, start);
+    let span = span_from_remaining(start, end);
     Ok(Expression::Number(num, span))
 }
 
@@ -300,7 +308,7 @@ fn parse_string_expr<'a>(input: &mut Input<'a>) -> PResult<'a, Expression> {
     let start = input.len();
     let s = parse_string(input)?;
     let end = input.len();
-    let span = Span::new(start - end, start);
+    let span = span_from_remaining(start, end);
     Ok(Expression::String(s, span))
 }
 
@@ -308,7 +316,7 @@ fn parse_bool_expr<'a>(input: &mut Input<'a>) -> PResult<'a, Expression> {
     let start = input.len();
     let b = parse_bool(input)?;
     let end = input.len();
-    let span = Span::new(start - end, start);
+    let span = span_from_remaining(start, end);
     Ok(Expression::Boolean(b, span))
 }
 
@@ -316,7 +324,7 @@ fn parse_this_expr<'a>(input: &mut Input<'a>) -> PResult<'a, Expression> {
     let start = input.len();
     keyword_this.parse_next(input)?;
     let end = input.len();
-    let span = Span::new(start - end, start);
+    let span = span_from_remaining(start, end);
     Ok(Expression::This(span))
 }
 
@@ -328,7 +336,7 @@ fn parse_super_expr<'a>(input: &mut Input<'a>) -> PResult<'a, Expression> {
     skip_ws_and_comments(input)?;
     let method = parse_identifier(input)?.to_string();
     let end = input.len();
-    let span = Span::new(start - end, start);
+    let span = span_from_remaining(start, end);
     Ok(Expression::Super(method, span))
 }
 
@@ -336,7 +344,7 @@ fn parse_identifier_expr<'a>(input: &mut Input<'a>) -> PResult<'a, Expression> {
     let start = input.len();
     let id = parse_identifier(input)?.to_string();
     let end = input.len();
-    let span = Span::new(start - end, start);
+    let span = span_from_remaining(start, end);
     Ok(Expression::Identifier(id, span))
 }
 
@@ -394,21 +402,22 @@ fn parse_lambda_expr<'a>(input: &mut Input<'a>) -> PResult<'a, Expression> {
     loop {
         skip_ws_and_comments(input)?;
 
-        // Проверяем, не конец ли блока
         let saved = input.checkpoint();
-        if keyword_end.parse_next(input).is_ok() {
-            break;
-        }
-        input.reset(&saved);
-
-        // Парсим оператор
         use crate::ponos::parser::statement;
-        let stmt = statement::parse_statement(input)?;
-        body.push(stmt);
+        match statement::parse_statement(input) {
+            Ok(stmt) => body.push(stmt),
+            Err(err) => {
+                input.reset(&saved);
+                if keyword_end.parse_next(input).is_ok() {
+                    break;
+                }
+                return Err(err);
+            }
+        }
     }
 
     let end = input.len();
-    let span = Span::new(start - end, start);
+    let span = span_from_remaining(start, end);
 
     Ok(Expression::Lambda(Box::new(LambdaExpr {
         params,
@@ -432,7 +441,7 @@ fn parse_parameter<'a>(input: &mut Input<'a>) -> PResult<'a, Parameter> {
     };
 
     let end = input.len();
-    let span = Span::new(start - end, start);
+    let span = span_from_remaining(start, end);
 
     Ok(Parameter {
         name,
@@ -451,7 +460,7 @@ fn parse_array_literal<'a>(input: &mut Input<'a>) -> PResult<'a, Expression> {
     let checkpoint = input.checkpoint();
     if char_(']').parse_next(input).is_ok() {
         let end = input.len();
-        let span = Span::new(start - end, start);
+        let span = span_from_remaining(start, end);
         return Ok(Expression::ArrayLiteral(Box::new(ArrayLiteral {
             elements: Vec::new(),
             span,
@@ -459,19 +468,33 @@ fn parse_array_literal<'a>(input: &mut Input<'a>) -> PResult<'a, Expression> {
     }
     input.reset(&checkpoint);
 
-    // Парсим элементы через запятую
-    let elements = separated(
-        1..,
-        parse_expression,
-        (skip_ws_and_comments, char_(','), skip_ws_and_comments),
-    )
-    .parse_next(input)?;
+    let mut elements = Vec::new();
+    loop {
+        let element = parse_expression(input).map_err(|e| match e {
+            ErrMode::Backtrack(err) => ErrMode::Cut(err),
+            other => other,
+        })?;
+        elements.push(element);
+
+        skip_ws_and_comments(input)?;
+
+        let checkpoint = input.checkpoint();
+        if char_(',').parse_next(input).is_ok() {
+            skip_ws_and_comments(input)?;
+            continue;
+        }
+        input.reset(&checkpoint);
+        break;
+    }
 
     skip_ws_and_comments(input)?;
-    char_(']').parse_next(input)?;
+    char_(']').parse_next(input).map_err(|e| match e {
+        ErrMode::Backtrack(err) => ErrMode::Cut(err),
+        other => other,
+    })?;
 
     let end = input.len();
-    let span = Span::new(start - end, start);
+    let span = span_from_remaining(start, end);
     Ok(Expression::ArrayLiteral(Box::new(ArrayLiteral {
         elements,
         span,
@@ -488,7 +511,7 @@ fn parse_dict_literal<'a>(input: &mut Input<'a>) -> PResult<'a, Expression> {
     let checkpoint = input.checkpoint();
     if char_('}').parse_next(input).is_ok() {
         let end = input.len();
-        let span = Span::new(start - end, start);
+        let span = span_from_remaining(start, end);
         return Ok(Expression::DictLiteral(Box::new(DictLiteral {
             pairs: Vec::new(),
             span,
@@ -496,19 +519,34 @@ fn parse_dict_literal<'a>(input: &mut Input<'a>) -> PResult<'a, Expression> {
     }
     input.reset(&checkpoint);
 
-    // Парсим пары ключ: значение
-    let pairs = separated(
-        1..,
-        parse_dict_pair,
-        (skip_ws_and_comments, char_(','), skip_ws_and_comments),
-    )
-    .parse_next(input)?;
+    let mut pairs = Vec::new();
+    loop {
+        let pair = parse_dict_pair(input).map_err(|e| match e {
+            ErrMode::Backtrack(err) => ErrMode::Cut(err),
+            other => other,
+        })?;
+        pairs.push(pair);
+
+        skip_ws_and_comments(input)?;
+
+        // Если есть запятая, продолжаем парсить пары
+        let checkpoint = input.checkpoint();
+        if char_(',').parse_next(input).is_ok() {
+            skip_ws_and_comments(input)?;
+            continue;
+        }
+        input.reset(&checkpoint);
+        break;
+    }
 
     skip_ws_and_comments(input)?;
-    char_('}').parse_next(input)?;
+    char_('}').parse_next(input).map_err(|e| match e {
+        ErrMode::Backtrack(err) => ErrMode::Cut(err),
+        other => other,
+    })?;
 
     let end = input.len();
-    let span = Span::new(start - end, start);
+    let span = span_from_remaining(start, end);
     Ok(Expression::DictLiteral(Box::new(DictLiteral {
         pairs,
         span,
@@ -528,6 +566,24 @@ fn parse_dict_pair<'a>(input: &mut Input<'a>) -> PResult<'a, (Expression, Expres
 #[cfg(test)]
 mod tests {
     use super::*;
+    use winnow::error::ErrMode;
+
+    fn line_col_at(src: &str, offset: usize) -> (usize, usize) {
+        let mut line = 0;
+        let mut col = 0;
+        for (idx, ch) in src.char_indices() {
+            if idx == offset {
+                break;
+            }
+            if ch == '\n' {
+                line += 1;
+                col = 0;
+            } else {
+                col += 1;
+            }
+        }
+        (line, col)
+    }
 
     #[test]
     fn test_parse_number_expr() {
@@ -901,5 +957,50 @@ mod tests {
             }
             _ => panic!("Expected binary divide"),
         }
+    }
+
+    #[test]
+    fn dict_literal_error_span_points_to_missing_comma() {
+        let source = r#"{ "a": 1, "b": {"c": 2} "d": 3 }"#;
+        let mut input = source;
+        let err = parse_expression(&mut input).expect_err("должна быть ошибка в словаре");
+        let err = match err {
+            ErrMode::Backtrack(e) | ErrMode::Cut(e) => e,
+            other => panic!("Ожидалась ошибка парсинга, получили {:?}", other),
+        };
+
+        println!("{}", err.format(source, "<test>"));
+        dbg!(&err.kind, err.span);
+
+        let expected_offset = source.find("\"d\"").expect("ключ d должен присутствовать");
+        let (expected_line, expected_col) = line_col_at(source, expected_offset);
+        let (start, _) = err.span.to_location(source);
+        assert_eq!(
+            (start.line, start.column),
+            (expected_line, expected_col),
+            "span должен указывать на ключ без запятой"
+        );
+    }
+
+    #[test]
+    fn array_literal_error_span_points_to_missing_comma() {
+        let source = "[1 2]";
+        let mut input: Input = source;
+        let err = parse_expression(&mut input).unwrap_err();
+
+        let err = match err {
+            ErrMode::Backtrack(e) | ErrMode::Cut(e) => e,
+            other => panic!("Ожидалась ошибка парсинга массива, получили {:?}", other),
+        };
+
+        let expected_offset = source.find('2').expect("пример содержит число 2");
+        let (expected_line, expected_col) = line_col_at(source, expected_offset);
+        let (start, _) = err.span.to_location(source);
+
+        assert_eq!(
+            (start.line, start.column),
+            (expected_line, expected_col),
+            "span должен указывать на начало второго элемента без запятой"
+        );
     }
 }

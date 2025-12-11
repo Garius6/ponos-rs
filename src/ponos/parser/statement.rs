@@ -1,35 +1,107 @@
 use crate::ponos::ast::*;
-use crate::ponos::parser::combinator::{Input, PResult, char_};
+use crate::ponos::parser::combinator::{
+    ensure_source_length, Input, PResult, char_, span_from_remaining,
+};
 use crate::ponos::parser::expression::parse_expression;
 use crate::ponos::parser::lexer::{
-    keyword_catch, keyword_else, keyword_end, keyword_export, keyword_func, keyword_if,
-    keyword_return, keyword_throw, keyword_try, keyword_var, keyword_while, parse_identifier,
-    skip_ws_and_comments,
+    keyword_annotation, keyword_catch, keyword_class, keyword_else, keyword_end, keyword_export,
+    keyword_func, keyword_if, keyword_interface, keyword_return, keyword_throw, keyword_try,
+    keyword_use, keyword_var, keyword_while, parse_identifier, skip_ws_and_comments,
 };
 use crate::ponos::span::Span;
-use winnow::combinator::{alt, separated};
+use winnow::combinator::separated;
 use winnow::prelude::*;
 use winnow::stream::Stream;
 
 /// Парсит оператор (выбирает подходящий парсер)
 pub fn parse_statement<'a>(input: &mut Input<'a>) -> PResult<'a, Statement> {
+    ensure_source_length(input.len());
     skip_ws_and_comments(input)?;
 
-    alt((
-        parse_import_statement,
-        parse_class_declaration,
-        parse_interface_declaration,
-        parse_annotation_declaration,
-        parse_var_statement,
-        parse_function_declaration,
-        parse_try_statement,
-        parse_throw_statement,
-        parse_if_statement,
-        parse_while_statement,
-        parse_return_statement,
-        parse_assignment_or_expression_statement,
-    ))
-    .parse_next(input)
+    let checkpoint = input.checkpoint();
+
+    // Импорты
+    if keyword_use(input).is_ok() {
+        input.reset(&checkpoint);
+        return parse_import_statement(input);
+    }
+    input.reset(&checkpoint);
+
+    // export перед конструкцией
+    let export_checkpoint = input.checkpoint();
+    if keyword_export(input).is_ok() {
+        skip_ws_and_comments(input)?;
+
+        if keyword_var(input).is_ok() {
+            input.reset(&checkpoint);
+            return parse_var_statement(input);
+        }
+        if keyword_func(input).is_ok() {
+            input.reset(&checkpoint);
+            return parse_function_declaration(input);
+        }
+        if keyword_class(input).is_ok() {
+            input.reset(&checkpoint);
+            return parse_class_declaration(input);
+        }
+        if keyword_interface(input).is_ok() {
+            input.reset(&checkpoint);
+            return parse_interface_declaration(input);
+        }
+        if keyword_annotation(input).is_ok() {
+            input.reset(&checkpoint);
+            return parse_annotation_declaration(input);
+        }
+
+        input.reset(&export_checkpoint);
+    } else {
+        input.reset(&checkpoint);
+    }
+
+    // Прочие конструкции
+    if keyword_var(input).is_ok() {
+        input.reset(&checkpoint);
+        return parse_var_statement(input);
+    }
+    if keyword_func(input).is_ok() {
+        input.reset(&checkpoint);
+        return parse_function_declaration(input);
+    }
+    if keyword_class(input).is_ok() {
+        input.reset(&checkpoint);
+        return parse_class_declaration(input);
+    }
+    if keyword_interface(input).is_ok() {
+        input.reset(&checkpoint);
+        return parse_interface_declaration(input);
+    }
+    if keyword_annotation(input).is_ok() {
+        input.reset(&checkpoint);
+        return parse_annotation_declaration(input);
+    }
+    if keyword_try(input).is_ok() {
+        input.reset(&checkpoint);
+        return parse_try_statement(input);
+    }
+    if keyword_throw(input).is_ok() {
+        input.reset(&checkpoint);
+        return parse_throw_statement(input);
+    }
+    if keyword_if(input).is_ok() {
+        input.reset(&checkpoint);
+        return parse_if_statement(input);
+    }
+    if keyword_while(input).is_ok() {
+        input.reset(&checkpoint);
+        return parse_while_statement(input);
+    }
+    if keyword_return(input).is_ok() {
+        input.reset(&checkpoint);
+        return parse_return_statement(input);
+    }
+
+    input.reset(&checkpoint);
+    parse_assignment_or_expression_statement(input)
 }
 
 /// Парсит объявление переменной: [экспорт] пер identifier [: type] = expression ;
@@ -72,7 +144,7 @@ pub fn parse_var_statement<'a>(input: &mut Input<'a>) -> PResult<'a, Statement> 
     char_(';').parse_next(input)?;
 
     let end = input.len();
-    let span = Span::new(start - end, start);
+    let span = span_from_remaining(start, end);
 
     Ok(Statement::VarDecl(VarDecl {
         name,
@@ -138,20 +210,21 @@ pub fn parse_function_declaration<'a>(input: &mut Input<'a>) -> PResult<'a, Stat
     loop {
         skip_ws_and_comments(input)?;
 
-        // Проверяем, не конец ли блока
         let saved = input.checkpoint();
-        if keyword_end(input).is_ok() {
-            break;
+        match parse_statement(input) {
+            Ok(stmt) => body.push(stmt),
+            Err(err) => {
+                input.reset(&saved);
+                if keyword_end(input).is_ok() {
+                    break;
+                }
+                return Err(err);
+            }
         }
-        input.reset(&saved);
-
-        // Парсим оператор
-        let stmt = parse_statement(input)?;
-        body.push(stmt);
     }
 
     let end = input.len();
-    let span = Span::new(start - end, start);
+    let span = span_from_remaining(start, end);
 
     Ok(Statement::FuncDecl(FuncDecl {
         name,
@@ -189,13 +262,17 @@ fn parse_else_branch<'a>(input: &mut Input<'a>) -> PResult<'a, Option<Vec<Statem
             skip_ws_and_comments(input)?;
 
             let checkpoint = input.checkpoint();
-            if keyword_else(input).is_ok() || keyword_end(input).is_ok() {
-                input.reset(&checkpoint);
-                break;
+            match parse_statement(input) {
+                Ok(stmt) => then_branch.push(stmt),
+                Err(err) => {
+                    input.reset(&checkpoint);
+                    if keyword_else(input).is_ok() || keyword_end(input).is_ok() {
+                        input.reset(&checkpoint);
+                        break;
+                    }
+                    return Err(err);
+                }
             }
-
-            let stmt = parse_statement(input)?;
-            then_branch.push(stmt);
         }
 
         skip_ws_and_comments(input)?;
@@ -221,13 +298,17 @@ fn parse_else_branch<'a>(input: &mut Input<'a>) -> PResult<'a, Option<Vec<Statem
             skip_ws_and_comments(input)?;
 
             let checkpoint = input.checkpoint();
-            if keyword_end(input).is_ok() {
-                input.reset(&checkpoint);
-                break;
+            match parse_statement(input) {
+                Ok(stmt) => else_stmts.push(stmt),
+                Err(err) => {
+                    input.reset(&checkpoint);
+                    if keyword_end(input).is_ok() {
+                        input.reset(&checkpoint);
+                        break;
+                    }
+                    return Err(err);
+                }
             }
-
-            let stmt = parse_statement(input)?;
-            else_stmts.push(stmt);
         }
 
         Ok(Some(else_stmts))
@@ -249,15 +330,22 @@ pub fn parse_if_statement<'a>(input: &mut Input<'a>) -> PResult<'a, Statement> {
     loop {
         skip_ws_and_comments(input)?;
 
-        // Проверяем, не иначе или конец ли
         let saved = input.checkpoint();
-        if keyword_else(input).is_ok() || keyword_end(input).is_ok() {
-            input.reset(&saved);
-            break;
+        match parse_statement(input) {
+            Ok(stmt) => then_branch.push(stmt),
+            Err(err) => {
+                input.reset(&saved);
+                if keyword_else(input).is_ok() {
+                    input.reset(&saved);
+                    break;
+                }
+                if keyword_end(input).is_ok() {
+                    input.reset(&saved);
+                    break;
+                }
+                return Err(err);
+            }
         }
-
-        let stmt = parse_statement(input)?;
-        then_branch.push(stmt);
     }
 
     skip_ws_and_comments(input)?;
@@ -269,7 +357,7 @@ pub fn parse_if_statement<'a>(input: &mut Input<'a>) -> PResult<'a, Statement> {
     keyword_end(input)?;
 
     let end = input.len();
-    let span = Span::new(start - end, start);
+    let span = span_from_remaining(start, end);
 
     Ok(Statement::If(IfStatement {
         condition,
@@ -294,22 +382,25 @@ pub fn parse_while_statement<'a>(input: &mut Input<'a>) -> PResult<'a, Statement
     loop {
         skip_ws_and_comments(input)?;
 
-        // Проверяем, не конец ли блока
         let saved = input.checkpoint();
-        if keyword_end(input).is_ok() {
-            input.reset(&saved);
-            break;
+        match parse_statement(input) {
+            Ok(stmt) => body.push(stmt),
+            Err(err) => {
+                input.reset(&saved);
+                if keyword_end(input).is_ok() {
+                    input.reset(&saved);
+                    break;
+                }
+                return Err(err);
+            }
         }
-
-        let stmt = parse_statement(input)?;
-        body.push(stmt);
     }
 
     skip_ws_and_comments(input)?;
     keyword_end(input)?;
 
     let end = input.len();
-    let span = Span::new(start - end, start);
+    let span = span_from_remaining(start, end);
 
     Ok(Statement::While(WhileStatement {
         condition,
@@ -330,7 +421,7 @@ pub fn parse_throw_statement<'a>(input: &mut Input<'a>) -> PResult<'a, Statement
     char_(';').parse_next(input)?;
 
     let end = input.len();
-    let span = Span::new(start - end, start);
+    let span = span_from_remaining(start, end);
 
     Ok(Statement::Throw(Box::new(ThrowStatement {
         expression,
@@ -349,7 +440,6 @@ pub fn parse_try_statement<'a>(input: &mut Input<'a>) -> PResult<'a, Statement> 
     loop {
         skip_ws_and_comments(input)?;
 
-        // Останавливаемся перед началом блока перехвата
         let checkpoint = input.checkpoint();
         if keyword_catch(input).is_ok() {
             input.reset(&checkpoint);
@@ -357,8 +447,17 @@ pub fn parse_try_statement<'a>(input: &mut Input<'a>) -> PResult<'a, Statement> 
         }
         input.reset(&checkpoint);
 
-        let stmt = parse_statement(input)?;
-        try_body.push(stmt);
+        match parse_statement(input) {
+            Ok(stmt) => try_body.push(stmt),
+            Err(err) => {
+                input.reset(&checkpoint);
+                if keyword_catch(input).is_ok() {
+                    input.reset(&checkpoint);
+                    break;
+                }
+                return Err(err);
+            }
+        }
     }
 
     keyword_catch(input)?;
@@ -389,18 +488,32 @@ pub fn parse_try_statement<'a>(input: &mut Input<'a>) -> PResult<'a, Statement> 
     let mut catch_body = Vec::new();
     loop {
         skip_ws_and_comments(input)?;
+
         let checkpoint = input.checkpoint();
         if keyword_end(input).is_ok() {
+            input.reset(&checkpoint);
             break;
         }
         input.reset(&checkpoint);
 
-        let stmt = parse_statement(input)?;
-        catch_body.push(stmt);
+        match parse_statement(input) {
+            Ok(stmt) => catch_body.push(stmt),
+            Err(err) => {
+                input.reset(&checkpoint);
+                if keyword_end(input).is_ok() {
+                    input.reset(&checkpoint);
+                    break;
+                }
+                return Err(err);
+            }
+        }
     }
 
+    skip_ws_and_comments(input)?;
+    keyword_end(input)?;
+
     let end = input.len();
-    let span = Span::new(start - end, start);
+    let span = span_from_remaining(start, end);
 
     Ok(Statement::Try(Box::new(TryStatement {
         try_body,
@@ -417,18 +530,22 @@ pub fn parse_return_statement<'a>(input: &mut Input<'a>) -> PResult<'a, Statemen
     keyword_return(input)?;
     skip_ws_and_comments(input)?;
 
-    // Опциональное возвращаемое значение
-    let value = if char_(';').parse_next(input).is_err() {
-        Some(parse_expression(input)?)
-    } else {
-        None
-    };
+    // Пустой возврат: сразу точка с запятой
+    let checkpoint = input.checkpoint();
+    if char_(';').parse_next(input).is_ok() {
+        let end = input.len();
+        let span = span_from_remaining(start, end);
+        return Ok(Statement::Return(ReturnStatement { value: None, span }));
+    }
 
+    // Возврат с выражением
+    input.reset(&checkpoint);
+    let value = Some(parse_expression(input)?);
     skip_ws_and_comments(input)?;
     char_(';').parse_next(input)?;
 
     let end = input.len();
-    let span = Span::new(start - end, start);
+    let span = span_from_remaining(start, end);
 
     Ok(Statement::Return(ReturnStatement { value, span }))
 }
@@ -450,7 +567,7 @@ pub fn parse_assignment_statement<'a>(input: &mut Input<'a>) -> PResult<'a, Stat
     char_(';').parse_next(input)?;
 
     let end = input.len();
-    let span = Span::new(start - end, start);
+    let span = span_from_remaining(start, end);
 
     Ok(Statement::Assignment(AssignmentStatement {
         target,
@@ -479,7 +596,7 @@ fn parse_assignment_target<'a>(input: &mut Input<'a>) -> PResult<'a, AssignmentT
             use crate::ponos::parser::error::{ParseErrorKind, PonosParseError};
             Err(winnow::error::ErrMode::Backtrack(PonosParseError::new(
                 ParseErrorKind::Custom("Invalid assignment target".to_string()),
-                Span::new(0, 1),
+                expr.span(),
             )))
         }
     }
@@ -526,7 +643,7 @@ fn parse_parameter<'a>(input: &mut Input<'a>) -> PResult<'a, Parameter> {
     };
 
     let end = input.len();
-    let span = Span::new(start - end, start);
+    let span = span_from_remaining(start, end);
 
     Ok(Parameter {
         name,
@@ -560,7 +677,7 @@ pub fn parse_import_statement<'a>(input: &mut Input<'a>) -> PResult<'a, Statemen
     char_(';').parse_next(input)?;
 
     let end = input.len();
-    let span = Span::new(start - end, start);
+    let span = span_from_remaining(start, end);
 
     Ok(Statement::Import(ImportStatement { path, alias, span }))
 }
@@ -625,7 +742,7 @@ pub fn parse_class_declaration<'a>(input: &mut Input<'a>) -> PResult<'a, Stateme
     keyword_end(input)?;
 
     let end = input.len();
-    let span = Span::new(start - end, start);
+    let span = span_from_remaining(start, end);
 
     Ok(Statement::ClassDecl(ClassDecl {
         name,
@@ -731,17 +848,20 @@ pub fn parse_constructor_declaration<'a>(input: &mut Input<'a>) -> PResult<'a, C
         skip_ws_and_comments(input)?;
 
         let saved = input.checkpoint();
-        if keyword_end(input).is_ok() {
-            break;
+        match parse_statement(input) {
+            Ok(stmt) => body.push(stmt),
+            Err(err) => {
+                input.reset(&saved);
+                if keyword_end(input).is_ok() {
+                    break;
+                }
+                return Err(err);
+            }
         }
-        input.reset(&saved);
-
-        let stmt = parse_statement(input)?;
-        body.push(stmt);
     }
 
     let end = input.len();
-    let span = Span::new(start - end, start);
+    let span = span_from_remaining(start, end);
 
     Ok(ConstructorDecl { params, body, span })
 }
@@ -772,7 +892,7 @@ pub fn parse_interface_declaration<'a>(input: &mut Input<'a>) -> PResult<'a, Sta
     keyword_end(input)?;
 
     let end = input.len();
-    let span = Span::new(start - end, start);
+    let span = span_from_remaining(start, end);
 
     Ok(Statement::InterfaceDecl(InterfaceDecl {
         name,
@@ -840,7 +960,7 @@ fn parse_method_signature<'a>(input: &mut Input<'a>) -> PResult<'a, MethodSignat
     char_(';').parse_next(input)?;
 
     let end = input.len();
-    let span = Span::new(start - end, start);
+    let span = span_from_remaining(start, end);
 
     Ok(MethodSignature { name, params, span })
 }
@@ -880,7 +1000,7 @@ pub fn parse_annotation_declaration<'a>(input: &mut Input<'a>) -> PResult<'a, St
     }
 
     let end = input.len();
-    let span = Span::new(start - end, start);
+    let span = span_from_remaining(start, end);
 
     Ok(Statement::AnnotationDecl(AnnotationDecl {
         name,
