@@ -60,6 +60,7 @@ impl NativeModuleRegistry {
                 "заменить".to_string(),
                 "верхний_регистр".to_string(),
                 "нижний_регистр".to_string(),
+                "начинается_с".to_string(),
             ],
         });
 
@@ -180,6 +181,9 @@ impl NativeModuleRegistry {
                         }
                         "нижний_регистр" => {
                             vm.register_and_define(&mangled_name, strings::str_to_lower);
+                        }
+                        "начинается_с" => {
+                            vm.register_and_define(&mangled_name, strings::str_start_with);
                         }
                         _ => {}
                     }

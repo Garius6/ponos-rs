@@ -85,3 +85,14 @@ pub fn str_to_lower(args: &[Value]) -> Result<Value, String> {
         _ => Err("Аргумент должен быть строкой".to_string()),
     }
 }
+
+pub fn str_start_with(args: &[Value]) -> Result<Value, String> {
+    if args.len() != 2 {
+        return Err("начинается_с требует 2 аргумента".to_string());
+    }
+
+    match (&args[0], &args[1]) {
+        (Value::String(s1), Value::String(s2)) => Ok(Value::Boolean(s1.starts_with(s2))),
+        (_, _) => Err("Аргумент должен быть строкой".to_string()),
+    }
+}

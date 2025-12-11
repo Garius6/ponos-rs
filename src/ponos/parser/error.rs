@@ -51,40 +51,107 @@ impl PonosParseError {
 
         let mut output = String::new();
 
-        // Заголовок ошибки
+        // Цвета ANSI
+        let red = "\x1b[31m";
+        let yellow = "\x1b[33m";
+        let blue = "\x1b[34m";
+        let bold = "\x1b[1m";
+        let reset = "\x1b[0m";
+        let gray = "\x1b[90m";
+
+        // Заголовок ошибки с цветом
         output.push_str(&format!(
-            "Ошибка: {} в {}:{}:{}\n",
+            "{}{}Ошибка:{} {} в {}{}:{}:{}{}\n",
+            bold,
+            red,
+            reset,
             self.kind.message(),
+            blue,
             filename,
             start_loc.line + 1,
-            start_loc.column + 1
+            start_loc.column + 1,
+            reset
         ));
 
         // Контекст
         for ctx in &self.context {
-            output.push_str(&format!("  в {}\n", ctx));
+            output.push_str(&format!("{}  в {}{}\n", gray, ctx, reset));
         }
 
-        // Исходный код с подсветкой
+        // Исходный код с подсветкой и контекстом
         let lines: Vec<&str> = source.lines().collect();
         if start_loc.line < lines.len() {
+            output.push_str("\n");
+
+            // Показываем 2 строки до ошибки для контекста
+            let context_start = start_loc.line.saturating_sub(2);
+            for i in context_start..start_loc.line {
+                if i < lines.len() {
+                    output.push_str(&format!(
+                        "{}{:4} |{} {}\n",
+                        gray,
+                        i + 1,
+                        reset,
+                        lines[i]
+                    ));
+                }
+            }
+
+            // Строка с ошибкой
             let error_line = lines[start_loc.line];
+            output.push_str(&format!(
+                "{}{:4} |{} {}\n",
+                blue,
+                start_loc.line + 1,
+                reset,
+                error_line
+            ));
 
-            output.push_str(&format!("\n{:4} | {}\n", start_loc.line + 1, error_line));
-            output.push_str(&format!("     | {}", " ".repeat(start_loc.column)));
-
+            // Подчеркивание ошибки
             let underline_len = if start_loc.line == end_loc.line {
                 (end_loc.column - start_loc.column).max(1)
             } else {
                 error_line.len() - start_loc.column
             };
 
-            output.push_str(&format!("{}\n", "^".repeat(underline_len)));
+            output.push_str(&format!(
+                "{}     |{} {}{}{}{}",
+                blue,
+                reset,
+                " ".repeat(start_loc.column),
+                red,
+                "^".repeat(underline_len),
+                reset
+            ));
+
+            // Добавляем текст что именно неправильно
+            let found_text = if start_loc.column < error_line.len() {
+                let end_col = (start_loc.column + underline_len).min(error_line.len());
+                &error_line[start_loc.column..end_col]
+            } else {
+                ""
+            };
+
+            if !found_text.is_empty() && found_text.trim().len() > 0 {
+                output.push_str(&format!(" {}{}{}", red, found_text, reset));
+            }
+            output.push_str("\n");
+
+            // Показываем 1 строку после ошибки для контекста
+            if start_loc.line + 1 < lines.len() {
+                output.push_str(&format!(
+                    "{}{:4} |{} {}\n",
+                    gray,
+                    start_loc.line + 2,
+                    reset,
+                    lines[start_loc.line + 1]
+                ));
+            }
         }
 
-        // Подсказка
+        // Подсказка с цветом
         if let Some(hint) = self.kind.hint() {
-            output.push_str(&format!("\nПодсказка: {}\n", hint));
+            output.push_str(&format!("\n{}{}💡 Подсказка:{} {}\n", bold, yellow, reset, hint));
         }
 
         output
@@ -121,20 +188,63 @@ impl ParseErrorKind {
 
     fn hint(&self) -> Option<String> {
         match self {
-            ParseErrorKind::UnexpectedToken { expected, .. }
-                if expected.contains(&";".to_string()) =>
-            {
-                Some("Возможно, вы забыли поставить точку с запятой?".to_string())
-            }
-            ParseErrorKind::UnexpectedToken { expected, .. }
-                if expected.contains(&"конец".to_string()) =>
-            {
-                Some("Возможно, вы забыли закрыть блок словом 'конец'?".to_string())
+            ParseErrorKind::UnexpectedToken { expected, found } => {
+                // Подсказки для точки с запятой
+                if expected.contains(&";".to_string()) {
+                    return Some("Возможно, вы забыли поставить точку с запятой? Операторы 'пер', 'возврат', 'исключение' и выражения должны заканчиваться на ';'".to_string());
+                }
+
+                // Подсказки для 'конец'
+                if expected.contains(&"конец".to_string()) {
+                    return Some("Возможно, вы забыли закрыть блок словом 'конец'? Блоки 'функ', 'класс', 'если', 'пока' должны заканчиваться на 'конец'".to_string());
+                }
+
+                // Подсказка для скобок
+                if expected.contains(&")".to_string()) {
+                    return Some("Возможно, вы забыли закрыть скобку ')'?".to_string());
+                }
+                if expected.contains(&"]".to_string()) {
+                    return Some("Возможно, вы забыли закрыть скобку ']'?".to_string());
+                }
+                if expected.contains(&"}".to_string()) {
+                    return Some("Возможно, вы забыли закрыть скобку '}'?".to_string());
+                }
+
+                // Подсказка для оператора присваивания
+                if expected.contains(&"=".to_string()) {
+                    return Some("Возможно, вы забыли оператор присваивания '='?".to_string());
+                }
+
+                // Подсказка для двоеточия (типы, словари)
+                if expected.contains(&":".to_string()) {
+                    return Some("Возможно, вы забыли двоеточие ':'? Оно нужно для типов или пар в словарях.".to_string());
+                }
+
+                // Подсказка если нашли 'иначе' вместо 'иначе если'
+                if found.starts_with("иначе") && expected.contains(&"конец".to_string()) {
+                    return Some("Возможно, вы хотели написать 'иначе если' вместо просто 'иначе'?".to_string());
+                }
+
+                // Подсказка для незакрытых строк
+                if found.contains("\"") || found.contains("'") {
+                    return Some("Возможно, у вас незакрытая строка? Проверьте кавычки.".to_string());
+                }
+
+                None
             }
             ParseErrorKind::UnexpectedEof => {
-                Some("Файл закончился раньше времени. Проверьте, все ли блоки закрыты.".to_string())
+                Some("Файл закончился раньше времени. Проверьте, все ли блоки закрыты словом 'конец', все ли строки закрыты кавычками, и все ли скобки закрыты.".to_string())
             }
-            _ => None,
+            ParseErrorKind::InvalidNumber(num) => {
+                Some(format!("Проверьте формат числа '{}'. Числа должны быть в формате: 42 или 3.14", num))
+            }
+            ParseErrorKind::InvalidString(_) => {
+                Some("Строки должны быть заключены в двойные кавычки (\"). Используйте \\ для экранирования: \\n, \\t, \\\"".to_string())
+            }
+            ParseErrorKind::InvalidIdentifier(id) => {
+                Some(format!("Идентификатор '{}' недопустим. Идентификаторы должны начинаться с буквы или _, и содержать только буквы, цифры и _", id))
+            }
+            ParseErrorKind::Custom(_) => None,
         }
     }
 }

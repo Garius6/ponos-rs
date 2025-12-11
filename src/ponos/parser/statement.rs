@@ -163,6 +163,77 @@ pub fn parse_function_declaration<'a>(input: &mut Input<'a>) -> PResult<'a, Stat
     }))
 }
 
+/// Вспомогательная функция для парсинга else-ветки (включая else-if цепочки)
+fn parse_else_branch<'a>(input: &mut Input<'a>) -> PResult<'a, Option<Vec<Statement>>> {
+    // Проверяем наличие "иначе"
+    let checkpoint = input.checkpoint();
+    if keyword_else(input).is_err() {
+        input.reset(&checkpoint);
+        return Ok(None);
+    }
+
+    skip_ws_and_comments(input)?;
+
+    // Проверяем, не "иначе если" ли это
+    let checkpoint2 = input.checkpoint();
+    if keyword_if(input).is_ok() {
+        // Это "иначе если" - парсим условие и тело
+        skip_ws_and_comments(input)?;
+
+        let condition = parse_expression(input)?;
+        skip_ws_and_comments(input)?;
+
+        // Парсим тело else-if
+        let mut then_branch = Vec::new();
+        loop {
+            skip_ws_and_comments(input)?;
+
+            let checkpoint = input.checkpoint();
+            if keyword_else(input).is_ok() || keyword_end(input).is_ok() {
+                input.reset(&checkpoint);
+                break;
+            }
+
+            let stmt = parse_statement(input)?;
+            then_branch.push(stmt);
+        }
+
+        skip_ws_and_comments(input)?;
+
+        // Рекурсивно парсим следующую else-ветку (может быть еще один else-if или финальный else)
+        let nested_else = parse_else_branch(input)?;
+
+        // Создаем if-statement для представления else-if
+        let else_if = Statement::If(IfStatement {
+            condition,
+            then_branch,
+            else_branch: nested_else,
+            span: Span::default(),
+        });
+
+        Ok(Some(vec![else_if]))
+    } else {
+        // Обычный else-блок
+        input.reset(&checkpoint2);
+
+        let mut else_stmts = Vec::new();
+        loop {
+            skip_ws_and_comments(input)?;
+
+            let checkpoint = input.checkpoint();
+            if keyword_end(input).is_ok() {
+                input.reset(&checkpoint);
+                break;
+            }
+
+            let stmt = parse_statement(input)?;
+            else_stmts.push(stmt);
+        }
+
+        Ok(Some(else_stmts))
+    }
+}
+
 /// Парсит if оператор: если expr statements [иначе statements] конец
 pub fn parse_if_statement<'a>(input: &mut Input<'a>) -> PResult<'a, Statement> {
     let start = input.len();
@@ -191,29 +262,8 @@ pub fn parse_if_statement<'a>(input: &mut Input<'a>) -> PResult<'a, Statement> {
 
     skip_ws_and_comments(input)?;
 
-    // Опциональная ветка else
-    let else_branch = if keyword_else(input).is_ok() {
-        skip_ws_and_comments(input)?;
-
-        let mut else_stmts = Vec::new();
-        loop {
-            skip_ws_and_comments(input)?;
-
-            // Проверяем, не конец ли блока
-            let saved = input.checkpoint();
-            if keyword_end(input).is_ok() {
-                input.reset(&saved);
-                break;
-            }
-
-            let stmt = parse_statement(input)?;
-            else_stmts.push(stmt);
-        }
-
-        Some(else_stmts)
-    } else {
-        None
-    };
+    // Опциональная ветка else или else-if
+    let else_branch = parse_else_branch(input)?;
 
     skip_ws_and_comments(input)?;
     keyword_end(input)?;

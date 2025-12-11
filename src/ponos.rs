@@ -46,11 +46,23 @@ impl Ponos {
 
     /// Запустить исходный код с указанием файла (для импортов)
     pub fn run_source_with_file(&mut self, source: String, file_path: Option<PathBuf>) {
-        println!("source:\n{}", source);
+        if cfg!(debug_assertions) {
+            println!("source:\n{}", source);
+        }
 
         // 1. Парсинг
-        let mut ast = self.parser.parse(source.clone()).unwrap();
-        println!("ast:\n{:#?}", ast);
+        let mut ast = match self.parser.parse(source.clone()) {
+            Ok(ast) => ast,
+            Err(e) => {
+                eprintln!("Ошибка парсинга:");
+                eprintln!("{}", e.format(&source, file_path.as_ref().and_then(|p| p.to_str()).unwrap_or("<источник>")));
+                std::process::exit(1);
+            }
+        };
+
+        if cfg!(debug_assertions) {
+            println!("ast:\n{:#?}", ast);
+        }
 
         // 2. Обработка импортов и загрузка модулей
         self.process_imports(&mut ast, file_path.as_deref());
@@ -59,16 +71,25 @@ impl Ponos {
         self.name_resolver
             .resolve(&mut ast, &self.symbol_table)
             .expect("Ошибка разрешения имён");
-        println!("ast после разрешения имён:\n{:#?}", ast);
 
+        if cfg!(debug_assertions) {
+            println!("ast после разрешения имён:\n{:#?}", ast);
+        }
         // 4. Генерация байткода
         let mut ctx = self.generator.generate(ast::AstNode::Program(ast));
-        println!("opcodes:\n{:#?}", ctx.opcodes);
-        println!("constants:\n{:#?}", ctx.constants);
 
+        if cfg!(debug_assertions) {
+            println!("opcodes:\n{:#?}", ctx.opcodes);
+        }
+        if cfg!(debug_assertions) {
+            println!("constants:\n{:#?}", ctx.constants);
+        }
         // 5. Выполнение
         self.vm.execute(ctx.opcodes, &mut ctx.constants);
-        println!("vm stack:\n{:#?}", self.vm.stack);
+
+        if cfg!(debug_assertions) {
+            println!("vm stack:\n{:#?}", self.vm.stack);
+        }
     }
 
     /// Обработать импорты в AST: загрузить модули и зарегистрировать их
@@ -94,10 +115,12 @@ impl Ponos {
                 &mut self.symbol_table,
             ) {
                 Ok(loaded_module) => {
-                    println!(
-                        "Загружен модуль: {} (пространство имён: {})",
-                        path, loaded_module.namespace
-                    );
+                    if cfg!(debug_assertions) {
+                        println!(
+                            "Загружен модуль: {} (пространство имён: {})",
+                            path, loaded_module.namespace
+                        );
+                    }
 
                     // Если это нативный модуль, регистрируем его функции в VM
                     if loaded_module
