@@ -76,6 +76,12 @@ impl NameResolver {
                     self.resolve_statement(stmt, symbol_table)?;
                 }
             }
+            Statement::ForEach(foreach_stmt) => {
+                self.resolve_expression(&mut foreach_stmt.iterable, symbol_table)?;
+                for stmt in &mut foreach_stmt.body {
+                    self.resolve_statement(stmt, symbol_table)?;
+                }
+            }
             Statement::Return(ret_stmt) => {
                 if let Some(value) = &mut ret_stmt.value {
                     self.resolve_expression(value, symbol_table)?;

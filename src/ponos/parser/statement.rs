@@ -4,9 +4,10 @@ use crate::ponos::parser::combinator::{
 };
 use crate::ponos::parser::expression::parse_expression;
 use crate::ponos::parser::lexer::{
-    keyword_annotation, keyword_catch, keyword_class, keyword_else, keyword_end, keyword_export,
-    keyword_func, keyword_if, keyword_interface, keyword_return, keyword_throw, keyword_try,
-    keyword_use, keyword_var, keyword_while, parse_identifier, skip_ws_and_comments,
+    keyword_annotation, keyword_catch, keyword_class, keyword_each, keyword_else, keyword_end,
+    keyword_export, keyword_for, keyword_from, keyword_func, keyword_if, keyword_interface,
+    keyword_return, keyword_throw, keyword_try, keyword_use, keyword_var, keyword_while,
+    parse_identifier, skip_ws_and_comments,
 };
 use crate::ponos::span::Span;
 use winnow::combinator::separated;
@@ -94,6 +95,10 @@ pub fn parse_statement<'a>(input: &mut Input<'a>) -> PResult<'a, Statement> {
     if keyword_while(input).is_ok() {
         input.reset(&checkpoint);
         return parse_while_statement(input);
+    }
+    if keyword_for(input).is_ok() {
+        input.reset(&checkpoint);
+        return parse_foreach_statement(input);
     }
     if keyword_return(input).is_ok() {
         input.reset(&checkpoint);
@@ -404,6 +409,69 @@ pub fn parse_while_statement<'a>(input: &mut Input<'a>) -> PResult<'a, Statement
 
     Ok(Statement::While(WhileStatement {
         condition,
+        body,
+        span,
+    }))
+}
+
+/// Парсит оператор foreach: для каждого element [, index] из iterable statements конец
+pub fn parse_foreach_statement<'a>(input: &mut Input<'a>) -> PResult<'a, Statement> {
+    let start = input.len();
+
+    keyword_for(input)?;
+    skip_ws_and_comments(input)?;
+    keyword_each(input)?;
+    skip_ws_and_comments(input)?;
+
+    // Парсим имя переменной элемента
+    let element_name = parse_identifier(input)?.to_string();
+    skip_ws_and_comments(input)?;
+
+    // Опционально парсим индекс через запятую
+    let index_name = if char_(',').parse_next(input).is_ok() {
+        skip_ws_and_comments(input)?;
+        Some(parse_identifier(input)?.to_string())
+    } else {
+        None
+    };
+
+    skip_ws_and_comments(input)?;
+    keyword_from(input)?;
+    skip_ws_and_comments(input)?;
+
+    // Парсим выражение-коллекцию
+    let iterable = parse_expression(input)?;
+    skip_ws_and_comments(input)?;
+
+    // Тело цикла
+    let mut body = Vec::new();
+    loop {
+        skip_ws_and_comments(input)?;
+
+        let saved = input.checkpoint();
+        match parse_statement(input) {
+            Ok(stmt) => body.push(stmt),
+            Err(err) => {
+                input.reset(&saved);
+                if keyword_end(input).is_ok() {
+                    input.reset(&saved);
+                    break;
+                }
+                return Err(err);
+            }
+        }
+    }
+
+    skip_ws_and_comments(input)?;
+    keyword_end(input)?;
+
+    let end = input.len();
+    let span = span_from_remaining(start, end);
+
+    Ok(Statement::ForEach(ForEachStatement {
+        element_name,
+        index_name,
+        iterable,
         body,
         span,
     }))

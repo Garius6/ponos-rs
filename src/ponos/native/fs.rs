@@ -1,5 +1,11 @@
-use crate::ponos::value::Value;
-use std::fs;
+use crate::ponos::value::{Class, Instance, Value};
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    fs::{self, DirEntry},
+    rc::Rc,
+    vec,
+};
 
 pub fn fs_read(args: &[Value]) -> Result<Value, String> {
     if args.len() != 1 {
@@ -62,4 +68,110 @@ pub fn fs_delete(args: &[Value]) -> Result<Value, String> {
     fs::remove_file(path).map_err(|e| format!("Ошибка удаления: {}", e))?;
 
     Ok(Value::Nil)
+}
+
+pub fn fs_read_dir(args: &[Value]) -> Result<Value, String> {
+    if args.len() != 1 {
+        return Err("Неверное количество параметров!".to_string());
+    }
+    let path = match &args[0] {
+        Value::String(s) => s.clone(),
+        _ => return Err("Параметр должен быть строкой!".to_string()),
+    };
+    let mut res: Vec<Value> = Vec::new();
+
+    let entries = fs::read_dir(path).expect("Cannot read dir");
+    for entry in entries {
+        let info = entry.expect("Cannot get info");
+        let instance = Instance {
+            class: Rc::new(create_file_info_class()),
+            fields: HashMap::from([
+                (
+                    "имя".to_string(),
+                    Value::String(info.file_name().into_string().expect("Cannot transform")),
+                ),
+                (
+                    "это_директория".to_string(),
+                    Value::Boolean(info.file_type().expect("Cannot transform").is_dir()),
+                ),
+                (
+                    "абсолютный_путь".to_string(),
+                    Value::String(info.path().canonicalize().unwrap().display().to_string())
+                )
+            ]),
+        };
+        res.push(Value::Instance(Rc::new(RefCell::new(instance))));
+    }
+    Ok(Value::Array(Rc::new(RefCell::new(res))))
+}
+
+fn create_file_info_class() -> Class {
+    let class = Class {
+        name: "ИнформацияОФайле".to_string(),
+        methods: HashMap::new(),
+        fields: vec![
+            "абсолютный_путь".to_string(),
+            "это_директория".to_string(),
+            "имя".to_string(),
+        ],
+        parent: None,
+    };
+
+    class
+}
+
+// Заготовка под ООП-style API
+
+fn create_file_class() -> Class {
+    let class = Class {
+        name: "Файл".to_string(),
+        methods: HashMap::new(),
+        fields: vec![
+            "путь".to_string(),
+            "это_директория".to_string(),
+            "имя".to_string(),
+        ],
+        parent: None,
+    };
+
+    class
+}
+
+pub fn file_constructor(args: &[Value]) -> Result<Value, String> {
+    if args.len() != 1 {
+        return Err("Неверное количество параметров!".to_string());
+    }
+    let path = match &args[0] {
+        Value::String(s) => s.clone(),
+        _ => return Err("Параметр должен быть строкой!".to_string()),
+    };
+
+    if !fs::exists(path.clone()).expect("Не удалось проверить существование файла")
+    {
+        return Err("По данному пути не существует файла".to_string());
+    }
+
+    let instance = Instance {
+        class: Rc::new(create_file_class()),
+        fields: HashMap::from([("путь".to_string(), Value::String(path))]),
+    };
+    Ok(Value::Instance(Rc::new(RefCell::new(instance))))
+}
+
+pub fn file_read_method(instance: &Rc<RefCell<Instance>>, args: &[Value]) -> Result<Value, String> {
+    todo!()
+}
+
+pub fn file_write_method(
+    instance: &Rc<RefCell<Instance>>,
+    args: &[Value],
+) -> Result<Value, String> {
+    todo!()
+}
+
+pub fn file_delete_method(
+    instance: &Rc<RefCell<Instance>>,
+    args: &[Value],
+) -> Result<Value, String> {
+    todo!()
 }

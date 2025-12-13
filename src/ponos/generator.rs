@@ -41,21 +41,12 @@ impl Generator {
                     self.emit_statement(stmt, &mut context);
                 }
             }
-            _ => panic!("Неверно сгенерировано ast"),
         }
         context.opcodes.push(OpCode::Halt);
         context
     }
 
-    pub fn generate_function_body(&mut self, statements: Vec<Statement>) -> GenContext {
-        let mut ctx = self.make_context(true);
-        for stmt in statements {
-            self.emit_statement(stmt, &mut ctx);
-        }
-        ctx
-    }
-
-    fn make_context(&self, in_function: bool) -> GenContext {
+        fn make_context(&self, in_function: bool) -> GenContext {
         GenContext {
             constants: Vec::new(),
             opcodes: Vec::new(),
@@ -187,6 +178,94 @@ impl Generator {
                 }
                 ctx.opcodes.push(OpCode::Jump(cond_pos));
                 self.patch_jump(ctx, jmp_false);
+            }
+            Statement::ForEach(foreach_stmt) => {
+                if !ctx.in_function {
+                    panic!("'для каждого' может использоваться только внутри функции");
+                }
+
+                // 1. Вычислить коллекцию и сохранить в __iter
+                self.emit_expression(foreach_stmt.iterable, ctx);
+                let iter_slot = ctx.next_local_slot;
+                ctx.next_local_slot += 1;
+                ctx.local_slots.insert("__iter".to_string(), iter_slot);
+                ctx.opcodes.push(OpCode::DefineLocal(iter_slot));
+
+                // 2. Получить длину коллекции через встроенную функцию длина()
+                let len_name = self.intern_string("длина", ctx);
+                ctx.opcodes.push(OpCode::GetGlobal(len_name));
+                ctx.opcodes.push(OpCode::GetLocal(iter_slot));
+                ctx.opcodes.push(OpCode::Call(1));
+
+                let len_slot = ctx.next_local_slot;
+                ctx.next_local_slot += 1;
+                ctx.local_slots.insert("__len".to_string(), len_slot);
+                ctx.opcodes.push(OpCode::DefineLocal(len_slot));
+
+                // 3. Инициализировать счетчик индекса = 0
+                let zero_idx = self.intern_constant(Value::Number(0.0), ctx);
+                ctx.opcodes.push(OpCode::Constant(zero_idx));
+
+                let index_slot = ctx.next_local_slot;
+                ctx.next_local_slot += 1;
+                if let Some(ref index_var) = foreach_stmt.index_name {
+                    ctx.local_slots.insert(index_var.clone(), index_slot);
+                } else {
+                    ctx.local_slots.insert("__index".to_string(), index_slot);
+                }
+                ctx.opcodes.push(OpCode::DefineLocal(index_slot));
+
+                // 3.5. Создать слот для элемента (но не инициализировать)
+                let element_slot = ctx.next_local_slot;
+                ctx.next_local_slot += 1;
+                ctx.local_slots
+                    .insert(foreach_stmt.element_name.clone(), element_slot);
+                let nil_idx = self.intern_constant(Value::Nil, ctx);
+                ctx.opcodes.push(OpCode::Constant(nil_idx));
+                ctx.opcodes.push(OpCode::DefineLocal(element_slot));
+
+                // 4. Начало цикла: индекс < __len
+                let loop_start = ctx.opcodes.len();
+                ctx.opcodes.push(OpCode::GetLocal(index_slot));
+                ctx.opcodes.push(OpCode::GetLocal(len_slot));
+                ctx.opcodes.push(OpCode::Less);
+
+                let exit_jump = self.emit_jump(ctx, OpCode::JumpIfFalse(0));
+
+                // 5. Получить текущий элемент: элемент = __iter[индекс]
+                ctx.opcodes.push(OpCode::GetLocal(iter_slot));
+                ctx.opcodes.push(OpCode::GetLocal(index_slot));
+                ctx.opcodes.push(OpCode::GetIndex);
+                ctx.opcodes.push(OpCode::SetLocal(element_slot));
+
+                // 6. Выполнить тело цикла
+                for stmt in foreach_stmt.body {
+                    self.emit_statement(stmt, ctx);
+                }
+
+                // 7. Инкремент индекса: индекс = индекс + 1
+                ctx.opcodes.push(OpCode::GetLocal(index_slot));
+                let one_idx = self.intern_constant(Value::Number(1.0), ctx);
+                ctx.opcodes.push(OpCode::Constant(one_idx));
+                ctx.opcodes.push(OpCode::Add);
+                ctx.opcodes.push(OpCode::SetLocal(index_slot));
+
+                // 8. Прыжок в начало цикла
+                ctx.opcodes.push(OpCode::Jump(loop_start));
+
+                // 9. Выход из цикла
+                self.patch_jump(ctx, exit_jump);
+
+                // Очистка локальных переменных итератора из таблицы символов
+                ctx.local_slots.remove("__iter");
+                ctx.local_slots.remove("__len");
+                if foreach_stmt.index_name.is_none() {
+                    ctx.local_slots.remove("__index");
+                }
+                ctx.local_slots.remove(&foreach_stmt.element_name);
+
+                // Уменьшаем счетчик слотов обратно (освобождаем слоты)
+                ctx.next_local_slot = iter_slot;
             }
             Statement::FuncDecl(func_decl) => {
                 if func_decl.is_exported && ctx.in_function {
@@ -436,6 +515,10 @@ impl Generator {
             }
             Expression::Boolean(b, _) => {
                 let idx = self.intern_constant(Value::Boolean(b), ctx);
+                ctx.opcodes.push(OpCode::Constant(idx))
+            }
+            Expression::Nil(_) => {
+                let idx = self.intern_constant(Value::Nil, ctx);
                 ctx.opcodes.push(OpCode::Constant(idx))
             }
             Expression::Identifier(name, _) => {
@@ -881,41 +964,6 @@ mod tests {
     }
 
     // Тесты импортов удалены, так как импорты теперь обрабатываются на этапе загрузки модулей
-
-    #[test]
-    fn generates_locals_in_function_body() {
-        let statements = vec![
-            Statement::VarDecl(VarDecl {
-                name: "x".to_string(),
-                type_annotation: None,
-                initializer: Some(number_expr(1.0)),
-                is_exported: false,
-                span: Span::default(),
-            }),
-            Statement::Assignment(crate::ponos::ast::AssignmentStatement {
-                target: crate::ponos::ast::AssignmentTarget::Identifier("x".to_string()),
-                value: number_expr(2.0),
-                span: Span::default(),
-            }),
-            Statement::Expression(Expression::Identifier("x".to_string(), Span::default())),
-        ];
-
-        let mut generator = Generator::new();
-        let ctx = generator.generate_function_body(statements);
-
-        assert_eq!(
-            ctx.opcodes,
-            vec![
-                OpCode::Constant(0),
-                OpCode::DefineLocal(0),
-                OpCode::Constant(1),
-                OpCode::SetLocal(0),
-                OpCode::GetLocal(0),
-            ]
-        );
-
-        assert_eq!(ctx.constants, vec![Value::Number(1.0), Value::Number(2.0)]);
-    }
 
     #[test]
     fn generates_if_statement_with_else() {

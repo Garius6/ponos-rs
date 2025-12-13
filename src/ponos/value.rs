@@ -36,6 +36,8 @@ pub enum Value {
     Class(Rc<Class>),
     Instance(Rc<RefCell<Instance>>),
     BoundMethod(Rc<BoundMethod>),
+    BoundBuiltinMethod(Rc<BoundBuiltinMethod>),
+    BoundNativeMethod(Rc<BoundNativeMethod>), // Нативный метод, привязанный к Instance
     Range(Option<f64>, Option<f64>), // (start, end) для срезов
     Array(Rc<RefCell<Vec<Value>>>),  // Массив (изменяемый)
     Dict(Rc<RefCell<HashMap<ValueKey, Value>>>), // Словарь (изменяемый)
@@ -107,6 +109,44 @@ pub struct BoundMethod {
     pub method: Rc<Function>,
 }
 
+#[derive(Clone)]
+pub struct BoundBuiltinMethod {
+    pub receiver: Box<Value>,
+    pub method: fn(&Value, &[Value]) -> Result<Value, String>,
+}
+
+// Реализация Debug для BoundBuiltinMethod (функция не поддерживает Debug автоматически)
+impl std::fmt::Debug for BoundBuiltinMethod {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BoundBuiltinMethod")
+            .field("receiver", &self.receiver)
+            .field("method", &"<встроенный метод>")
+            .finish()
+    }
+}
+
+/// Сигнатура нативного метода для классов Instance
+/// Принимает receiver (экземпляр класса) и массив аргументов
+pub type NativeMethodImpl = fn(&Rc<RefCell<Instance>>, &[Value]) -> Result<Value, String>;
+
+/// Нативный метод, привязанный к экземпляру класса
+/// Используется для реализации методов нативных классов (Файл, HttpЗапрос и т.д.)
+#[derive(Clone)]
+pub struct BoundNativeMethod {
+    pub receiver: Rc<RefCell<Instance>>,
+    pub method: NativeMethodImpl,
+}
+
+// Реализация Debug для BoundNativeMethod
+impl std::fmt::Debug for BoundNativeMethod {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BoundNativeMethod")
+            .field("receiver", &self.receiver)
+            .field("method", &"<нативный метод>")
+            .finish()
+    }
+}
+
 pub fn is_equal(a: &Value, b: &Value) -> bool {
     match (a, b) {
         (Value::Number(x), Value::Number(y)) => x == y,
@@ -149,6 +189,8 @@ impl PartialEq for Value {
             (Value::Class(a), Value::Class(b)) => Rc::ptr_eq(a, b),
             (Value::Instance(a), Value::Instance(b)) => Rc::ptr_eq(a, b),
             (Value::BoundMethod(a), Value::BoundMethod(b)) => Rc::ptr_eq(a, b),
+            (Value::BoundBuiltinMethod(a), Value::BoundBuiltinMethod(b)) => Rc::ptr_eq(a, b),
+            (Value::BoundNativeMethod(a), Value::BoundNativeMethod(b)) => Rc::ptr_eq(a, b),
             (Value::NativeFunction(a), Value::NativeFunction(b)) => a == b,
             (Value::Array(a), Value::Array(b)) => Rc::ptr_eq(a, b),
             (Value::Dict(a), Value::Dict(b)) => Rc::ptr_eq(a, b),

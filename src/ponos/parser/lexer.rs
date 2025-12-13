@@ -122,6 +122,11 @@ pub fn parse_bool<'a>(input: &mut Input<'a>) -> PResult<'a, bool> {
     .parse_next(input)
 }
 
+/// Парсит nil значение (ничто)
+pub fn parse_nil<'a>(input: &mut Input<'a>) -> PResult<'a, ()> {
+    keyword("ничто").parse_next(input)
+}
+
 /// Парсит идентификатор (обертка для удобства)
 pub fn parse_identifier<'a>(input: &mut Input<'a>) -> PResult<'a, &'a str> {
     ident_parser(input)
@@ -300,6 +305,18 @@ pub fn keyword_and<'a>(input: &mut Input<'a>) -> PResult<'a, ()> {
 
 pub fn keyword_or<'a>(input: &mut Input<'a>) -> PResult<'a, ()> {
     keyword("или").parse_next(input)
+}
+
+pub fn keyword_for<'a>(input: &mut Input<'a>) -> PResult<'a, ()> {
+    keyword("для").parse_next(input)
+}
+
+pub fn keyword_each<'a>(input: &mut Input<'a>) -> PResult<'a, ()> {
+    keyword("каждого").parse_next(input)
+}
+
+pub fn keyword_from<'a>(input: &mut Input<'a>) -> PResult<'a, ()> {
+    keyword("из").parse_next(input)
 }
 
 #[cfg(test)]

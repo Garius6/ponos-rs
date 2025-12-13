@@ -1,3 +1,4 @@
+pub mod builtin_methods;
 pub mod fs;
 pub mod io;
 pub mod json;
@@ -39,6 +40,7 @@ impl NativeModuleRegistry {
                 "писать".to_string(),
                 "существует".to_string(),
                 "удалить".to_string(),
+                "прочитать_директорию".to_string(),
             ],
         });
 
@@ -139,9 +141,13 @@ impl NativeModuleRegistry {
                         "удалить" => {
                             vm.register_and_define(&mangled_name, fs::fs_delete);
                         }
+                        "прочитать_директорию" => {
+                            vm.register_and_define(&mangled_name, fs::fs_read_dir);
+                        } 
                         _ => {}
                     }
                 }
+                
             }
             "стд/система" => {
                 for export in &module.exports {

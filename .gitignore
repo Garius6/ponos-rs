@@ -4,4 +4,4 @@ src/target
 *.md
 !README.md
 *.txt
-add_to_path.sh
+*.sh

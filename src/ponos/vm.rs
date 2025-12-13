@@ -1,9 +1,11 @@
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use crate::ponos::{
+    native::builtin_methods::{BuiltinMethodRegistry, TypeDiscriminant},
     opcode::OpCode,
     value::{
-        self, BoundMethod, Class, Closure, Function, Instance, NativeFnId, Upvalue, Value, ValueKey,
+        self, BoundBuiltinMethod, BoundMethod, BoundNativeMethod, Class, Closure, Function,
+        Instance, NativeFnId, NativeMethodImpl, Upvalue, Value, ValueKey,
     },
 };
 
@@ -25,12 +27,41 @@ struct ExceptionHandler {
 
 type NativeFn = fn(&[Value]) -> Result<Value, String>;
 
+/// Реестр нативных методов для классов
+/// Хранит методы в виде HashMap<(имя_класса, имя_метода), реализация_метода>
+pub struct NativeMethodRegistry {
+    methods: HashMap<(String, String), NativeMethodImpl>,
+}
+
+impl NativeMethodRegistry {
+    pub fn new() -> Self {
+        NativeMethodRegistry {
+            methods: HashMap::new(),
+        }
+    }
+
+    /// Зарегистрировать нативный метод для класса
+    pub fn register(&mut self, class_name: &str, method_name: &str, method: NativeMethodImpl) {
+        self.methods
+            .insert((class_name.to_string(), method_name.to_string()), method);
+    }
+
+    /// Получить нативный метод для класса
+    pub fn get(&self, class_name: &str, method_name: &str) -> Option<NativeMethodImpl> {
+        self.methods
+            .get(&(class_name.to_string(), method_name.to_string()))
+            .copied()
+    }
+}
+
 pub struct VM {
     pub stack: Vec<Value>,
     globals: HashMap<String, Value>, // Плоское пространство глобальных переменных
     frames: Vec<CallFrame>,
     native_functions: Vec<NativeFn>,
     open_upvalues: Vec<Rc<RefCell<Upvalue>>>,
+    builtin_method_registry: BuiltinMethodRegistry,
+    native_method_registry: NativeMethodRegistry,
 }
 
 impl<'a> VM {
@@ -41,6 +72,8 @@ impl<'a> VM {
             frames: Vec::new(),
             native_functions: Vec::new(),
             open_upvalues: Vec::new(),
+            builtin_method_registry: BuiltinMethodRegistry::new(),
+            native_method_registry: NativeMethodRegistry::new(),
         };
 
         // Регистрируем встроенные функции
@@ -277,6 +310,28 @@ impl<'a> VM {
                     let callee = self.stack[callee_idx].clone();
 
                     match callee {
+                        Value::BoundBuiltinMethod(bound) => {
+                            // Вызов встроенного метода
+                            let args: Vec<Value> = self.stack.drain(callee_idx + 1..).collect();
+                            match (bound.method)(&bound.receiver, &args) {
+                                Ok(result) => {
+                                    self.stack.truncate(callee_idx);
+                                    self.stack.push(result);
+                                }
+                                Err(err) => panic!("Ошибка встроенного метода: {}", err),
+                            }
+                        }
+                        Value::BoundNativeMethod(bound) => {
+                            // Вызов нативного метода для класса
+                            let args: Vec<Value> = self.stack.drain(callee_idx + 1..).collect();
+                            match (bound.method)(&bound.receiver, &args) {
+                                Ok(result) => {
+                                    self.stack.truncate(callee_idx);
+                                    self.stack.push(result);
+                                }
+                                Err(err) => panic!("Ошибка нативного метода: {}", err),
+                            }
+                        }
                         Value::Class(class) => {
                             // Создание экземпляра класса
                             let instance = Instance {
@@ -392,8 +447,46 @@ impl<'a> VM {
                         _ => panic!("Ожидался Constant после GetProperty"),
                     };
 
-                    let instance_value = self.stack.pop().unwrap();
-                    match instance_value {
+                    let receiver = self.stack.pop().unwrap();
+
+                    // 1. Определить тип receiver для встроенных методов
+                    let type_disc = match &receiver {
+                        Value::Array(_) => Some(TypeDiscriminant::Array),
+                        Value::String(_) => Some(TypeDiscriminant::String),
+                        Value::Dict(_) => Some(TypeDiscriminant::Dict),
+                        _ => None,
+                    };
+
+                    // 2. Искать в реестре встроенных методов
+                    let mut handled = false;
+                    if let Some(disc) = type_disc {
+                        if let Some(builtin_method) = self.builtin_method_registry.get(disc, &property_name) {
+                            let bound = Value::BoundBuiltinMethod(Rc::new(BoundBuiltinMethod {
+                                receiver: Box::new(receiver.clone()),
+                                method: builtin_method,
+                            }));
+                            self.stack.push(bound);
+                            handled = true;
+                        }
+                    }
+
+                    // 3. Проверить нативные методы для Instance
+                    if !handled {
+                        if let Value::Instance(ref instance_rc) = receiver {
+                            let class_name = &instance_rc.borrow().class.name;
+                            if let Some(native_method) = self.native_method_registry.get(class_name, &property_name) {
+                                let bound = Value::BoundNativeMethod(Rc::new(BoundNativeMethod {
+                                    receiver: instance_rc.clone(),
+                                    method: native_method,
+                                }));
+                                self.stack.push(bound);
+                                handled = true;
+                            }
+                        }
+                    }
+
+                    // 4. Fallback на существующую обработку Instance
+                    if !handled {match receiver {
                         Value::Instance(instance_rc) => {
                             // Сначала ищем в полях
                             let field_value =
@@ -417,8 +510,8 @@ impl<'a> VM {
                                 }
                             }
                         }
-                        _ => panic!("GetProperty: не экземпляр, получен {:?}", instance_value),
-                    }
+                        _ => panic!("GetProperty: не экземпляр и нет встроенного метода, получен {:?}", receiver),
+                    }}
                 }
                 OpCode::SetProperty => {
                     // Следующий опкод: Constant с индексом имени свойства
@@ -881,6 +974,18 @@ impl<'a> VM {
         self.globals
             .insert(name.to_string(), Value::NativeFunction(id));
     }
+
+    /// Зарегистрировать нативный метод для класса
+    /// Используется для регистрации методов нативных классов (Файл, HttpЗапрос и т.д.)
+    pub fn register_native_method(
+        &mut self,
+        class_name: &str,
+        method_name: &str,
+        method: NativeMethodImpl,
+    ) {
+        self.native_method_registry
+            .register(class_name, method_name, method);
+    }
 }
 
 // Встроенные функции
@@ -903,13 +1008,33 @@ fn builtin_print(args: &[Value]) -> Result<Value, String> {
         return Err("вывести() требует ровно 1 аргумент".to_string());
     }
 
-    match &args[0] {
-        Value::String(s) => {
-            println!("{}", s);
-            Ok(Value::Nil)
+    fn format_value(v: &Value) -> String {
+        match v {
+            Value::String(s) => s.clone(),
+            Value::Number(n) => n.to_string(),
+            Value::Boolean(b) => b.to_string(),
+            Value::Nil => "ничто".to_string(),
+            Value::Array(arr) => {
+                let items: Vec<String> = arr.borrow().iter().map(format_value).collect();
+                format!("[{}]", items.join(", "))
+            }
+            Value::Dict(dict) => {
+                let items: Vec<String> = dict.borrow().iter().map(|(k, v)| {
+                    let key_str = match k {
+                        crate::ponos::value::ValueKey::String(s) => format!("\"{}\"", s),
+                        crate::ponos::value::ValueKey::Number(n) => n.to_string(),
+                        crate::ponos::value::ValueKey::Boolean(b) => b.to_string(),
+                    };
+                    format!("{}: {}", key_str, format_value(v))
+                }).collect();
+                format!("{{{}}}", items.join(", "))
+            }
+            _ => format!("<объект>"),
         }
-        _ => Err("вывести() поддерживает только строки".to_string()),
     }
+
+    println!("{}", format_value(&args[0]));
+    Ok(Value::Nil)
 }
 
 #[cfg(test)]

@@ -4,7 +4,7 @@ use crate::ponos::parser::combinator::{
 };
 use crate::ponos::parser::lexer::{
     keyword_and, keyword_end, keyword_func, keyword_or, keyword_super, keyword_this, parse_bool,
-    parse_identifier, parse_number, parse_string, skip_ws_and_comments,
+    parse_identifier, parse_nil, parse_number, parse_string, skip_ws_and_comments,
 };
 use crate::ponos::span::Span;
 use winnow::error::ErrMode;
@@ -287,6 +287,7 @@ fn parse_primary_expression<'a>(input: &mut Input<'a>) -> PResult<'a, Expression
         parse_number_expr,
         parse_string_expr,
         parse_bool_expr,
+        parse_nil_expr,
         parse_this_expr,
         parse_super_expr,
         parse_lambda_expr,
@@ -318,6 +319,14 @@ fn parse_bool_expr<'a>(input: &mut Input<'a>) -> PResult<'a, Expression> {
     let end = input.len();
     let span = span_from_remaining(start, end);
     Ok(Expression::Boolean(b, span))
+}
+
+fn parse_nil_expr<'a>(input: &mut Input<'a>) -> PResult<'a, Expression> {
+    let start = input.len();
+    parse_nil(input)?;
+    let end = input.len();
+    let span = span_from_remaining(start, end);
+    Ok(Expression::Nil(span))
 }
 
 fn parse_this_expr<'a>(input: &mut Input<'a>) -> PResult<'a, Expression> {

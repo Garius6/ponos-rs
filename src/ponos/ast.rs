@@ -3,8 +3,6 @@ use crate::ponos::span::Span;
 #[derive(Debug, Clone)]
 pub enum AstNode {
     Program(Program),
-    Statement(Statement),
-    Expression(Expression),
 }
 
 #[derive(Debug, Clone)]
@@ -23,6 +21,7 @@ pub enum Statement {
     ModuleBlock(ModuleBlock), // Блок кода модуля с пространством имен
     If(IfStatement),
     While(WhileStatement),
+    ForEach(ForEachStatement),
     Return(ReturnStatement),
     Try(Box<TryStatement>),
     Throw(Box<ThrowStatement>),
@@ -80,6 +79,15 @@ pub struct IfStatement {
 #[derive(Debug, Clone)]
 pub struct WhileStatement {
     pub condition: Expression,
+    pub body: Vec<Statement>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct ForEachStatement {
+    pub element_name: String,
+    pub index_name: Option<String>,
+    pub iterable: Expression,
     pub body: Vec<Statement>,
     pub span: Span,
 }
@@ -195,6 +203,7 @@ pub enum Expression {
     Number(f64, Span),
     String(String, Span),
     Boolean(bool, Span),
+    Nil(Span),
 
     // Идентификаторы
     Identifier(String, Span),
@@ -236,6 +245,7 @@ impl Expression {
             Expression::Number(_, s) => *s,
             Expression::String(_, s) => *s,
             Expression::Boolean(_, s) => *s,
+            Expression::Nil(s) => *s,
             Expression::Identifier(_, s) => *s,
             Expression::Binary(e) => e.span,
             Expression::Unary(e) => e.span,
